@@ -1,30 +1,38 @@
 import React from 'react';
 import { View, Text, StyleSheet, Modal, TouchableOpacity, ScrollView } from 'react-native';
 import { useTranslation } from '../hooks/useTranslation';
-import type { WeeklySummary } from '../types';
-import { theme } from '../constants/theme';
-import { Flame, Calendar, BookOpen, Smile, X } from 'lucide-react-native';
+import type { WeeklySummary, MonthlySummary } from '../types';
+import { Theme } from '../constants/theme';
+import { useAppTheme } from '../hooks/useAppTheme';
+import { Flame, Calendar, Smile, X } from 'lucide-react-native';
+import { differenceInCalendarDays, parseISO } from 'date-fns';
 
-interface WeeklySummaryModalProps {
+interface SummaryModalProps {
   visible: boolean;
-  summary: WeeklySummary | null;
+  summary: WeeklySummary | MonthlySummary | null;
   onClose: () => void;
 }
 
-export const WeeklySummaryModal: React.FC<WeeklySummaryModalProps> = ({
+export const WeeklySummaryModal: React.FC<SummaryModalProps> = ({
   visible,
   summary,
   onClose,
 }) => {
+  const { theme } = useAppTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
   const { t, formatDateDual } = useTranslation();
 
   if (!summary) return null;
 
-  const startDate = new Date(summary.startDate + 'T00:00:00');
-  const endDate = new Date(summary.endDate + 'T23:59:59');
+  const isMonthly = 'month' in summary;
+  const startDate = parseISO(summary.startDate);
+  const endDate = parseISO(summary.endDate);
 
   const startFormatted = formatDateDual(startDate).primaryDate;
   const endFormatted = formatDateDual(endDate).primaryDate;
+  const totalDaysInRange = isMonthly ? (differenceInCalendarDays(endDate, startDate) + 1) : 7;
+  const streakValue = isMonthly ? (summary as MonthlySummary).longestStreakInMonth : (summary as WeeklySummary).streakAtEndOfWeek;
+  const streakLabel = isMonthly ? t('longestStreakInMonth') : t('endOfWeekStreak');
 
   return (
     <Modal
@@ -38,7 +46,7 @@ export const WeeklySummaryModal: React.FC<WeeklySummaryModalProps> = ({
           {/* Header */}
           <View style={styles.header}>
             <View>
-              <Text style={styles.title}>{t('weeklySummary')}</Text>
+              <Text style={styles.title}>{isMonthly ? t('monthlySummary') : t('weeklySummary')}</Text>
               <Text style={styles.dateSub}>{startFormatted} – {endFormatted}</Text>
             </View>
             <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
@@ -47,18 +55,18 @@ export const WeeklySummaryModal: React.FC<WeeklySummaryModalProps> = ({
           </View>
 
           <ScrollView style={styles.body}>
-            {/* Stat Row 1: Days Written & Streak */}
+            {/* Stat Grid */}
             <View style={styles.statGrid}>
               <View style={styles.statBox}>
                 <Calendar size={20} color={theme.colors.accent} style={styles.boxIcon} />
-                <Text style={styles.statNumber}>{summary.daysWrittenCount} / 7</Text>
+                <Text style={styles.statNumber}>{summary.daysWrittenCount} / {totalDaysInRange}</Text>
                 <Text style={styles.statLabel}>{t('daysWritten')}</Text>
               </View>
 
               <View style={styles.statBox}>
                 <Flame size={20} color="#FF5500" fill="#FF5500" style={styles.boxIcon} />
-                <Text style={styles.statNumber}>{summary.streakAtEndOfWeek} {t('days')}</Text>
-                <Text style={styles.statLabel}>{t('endOfWeekStreak')}</Text>
+                <Text style={styles.statNumber}>{streakValue} {t('days')}</Text>
+                <Text style={styles.statLabel}>{streakLabel}</Text>
               </View>
             </View>
 
@@ -91,7 +99,7 @@ export const WeeklySummaryModal: React.FC<WeeklySummaryModalProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => StyleSheet.create({
   overlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
@@ -101,11 +109,18 @@ const styles = StyleSheet.create({
   },
   card: {
     width: '100%',
-    maxWidth: 340,
+    maxWidth: 400,
+    maxHeight: '80%',
     backgroundColor: theme.colors.background,
     borderRadius: 16,
     padding: theme.spacing.md,
-    maxHeight: '80%',
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
   },
   header: {
     flexDirection: 'row',
@@ -163,21 +178,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 2,
   },
-  streakBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: theme.colors.surface,
-    padding: theme.spacing.md,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    marginBottom: theme.spacing.md,
-  },
-  streakNumber: {
-    fontSize: theme.typography.sizes.regular,
-    fontFamily: theme.typography.fontFamily.bold,
-    color: theme.colors.textPrimary,
-  },
   moodSection: {
     marginTop: theme.spacing.xs,
   },
@@ -217,7 +217,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   actionBtnText: {
-    color: '#FFF',
+    color: theme.colors.accentForeground,
     fontSize: theme.typography.sizes.regular,
     fontFamily: theme.typography.fontFamily.bold,
   },

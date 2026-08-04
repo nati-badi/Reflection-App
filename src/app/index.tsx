@@ -1,83 +1,68 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import {
   ActivityIndicator,
   Animated,
   AppState,
-  KeyboardAvoidingView,
   Platform,
-  ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
-  View
+  View,
+  FlatList,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import {
   Flame,
   Search,
   Settings,
-  Clock,
-  Bold,
-  Italic,
-  Heading,
-  List,
-  ListOrdered,
-  Smile
+  Trophy,
+  CalendarDays,
+  Plus
 } from 'lucide-react-native';
-import { theme } from '../constants/theme';
+import { Theme } from '../constants/theme';
+import { useAppTheme } from '../hooks/useAppTheme';
 import { useTranslation } from '../hooks/useTranslation';
 import {
-  getOrCreateTodayDocument,
-  saveDayDocument,
+  getPastDays,
   getStreak,
-  generateAndSaveWeeklySummary,
-  migrateEntriesToDays
+  getWeeklySummariesHistory,
+  getMonthlySummariesHistory,
+  migrateEntriesToDays,
+  cleanupDuplicateDays,
+  getTodayDateString
 } from '../services/db';
 import { useAuthStore } from '../store/useAuthStore';
 import { useSettingsStore } from '../store/useSettingsStore';
-import type { DayEntry, StreakMeta, WeeklySummary } from '../types';
-import { format, startOfWeek, subWeeks } from 'date-fns';
+import type { DayEntry, StreakMeta, WeeklySummary, MonthlySummary } from '../types';
+import { format, parseISO, differenceInDays } from 'date-fns';
 import { WeeklySummaryModal } from '../components/WeeklySummaryModal';
-import { processEditorTextChange, renumberContentLists } from '../utils/editorUtils';
+import { mergeTimelineItems, TimelineItem } from '../utils/timelineUtils';
+import { doc, onSnapshot, query, collection, where } from 'firebase/firestore';
+import { db } from '../config/firebase';
 
-const MOODS = ['😁', '😊', '😐', '😔', '😠'];
-
-const QUICK_EMOJIS = ['✨', '❤️', '💡', '📝', '🎯', '🙏', '☀️', '🌧️', '☕', '📌', '🔥', '💭', '📅', '🔖', '⭐', '💪', '🎉', '😊', '🤔', '🙌'];
-const QUICK_SYMBOLS = ['—', '•', '…', '«', '»', '“', '”', '→', '←', '↑', '↓', '©', '™', '§', '°', '±', '≠', '≈'];
-
-export default function TimelineScreen() {
+export default function TimelineFeedScreen() {
   const router = useRouter();
   const { user } = useAuthStore();
+  const { theme } = useAppTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const { t, formatDateDual } = useTranslation();
-  const { lastSeenWeeklySummaryWeek, setLastSeenWeeklySummaryWeek } = useSettingsStore();
 
-  const [content, setContent] = useState('');
-  const [mood, setMood] = useState<string | null>(null);
-  const [streak, setStreak] = useState<StreakMeta | null>(null);
   const [loading, setLoading] = useState(true);
+  const [listLoadingMore, setListLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [lastDocId, setLastDocId] = useState<string | undefined>();
 
-  // Quick insert & formatting toolbar states
-  const [showQuickInsert, setShowQuickInsert] = useState(true);
-  const [quickCategory, setQuickCategory] = useState<'emoji' | 'symbol'>('emoji');
-  const inputRef = useRef<TextInput>(null);
-  const [selection, setSelection] = useState({ start: 0, end: 0 });
-  const isProgrammaticInsert = useRef(false);
+  // Data states
+  const [todayDoc, setTodayDoc] = useState<DayEntry | null>(null);
+  const [listDays, setListDays] = useState<DayEntry[]>([]);
+  const [weeklies, setWeeklies] = useState<WeeklySummary[]>([]);
+  const [monthlies, setMonthlies] = useState<MonthlySummary[]>([]);
+  const [streak, setStreak] = useState<StreakMeta | null>(null);
 
-  // Auto-save debouncing & flush refs
-  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const latestStateRef = useRef({ content: '', mood: null as string | null });
-
-  // Weekly Summary Auto-Prompt Modal State
-  const [weeklySummary, setWeeklySummary] = useState<WeeklySummary | null>(null);
-  const [summaryModalVisible, setSummaryModalVisible] = useState(false);
+  // Summary Modal View
+  const [selectedSummary, setSelectedSummary] = useState<WeeklySummary | MonthlySummary | null>(null);
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
-
-  // Keep latest state ref synced for immediate flush on app backgrounding/unmount
-  useEffect(() => {
-    latestStateRef.current = { content, mood };
-  }, [content, mood]);
 
   useEffect(() => {
     Animated.loop(
@@ -96,257 +81,269 @@ export default function TimelineScreen() {
     ).start();
   }, [pulseAnim]);
 
-  // Immediate Save Flush function
-  const flushSave = useCallback(async () => {
-    if (!user) return;
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current);
-      saveTimeoutRef.current = null;
-    }
-    const todayStr = format(new Date(), 'yyyy-MM-dd');
-    const { content: currentContent, mood: currentMood } = latestStateRef.current;
-    
-    // Save to Firestore & update streak if non-empty
-    await saveDayDocument(user.uid, todayStr, currentContent, currentMood);
-    const updatedStreak = await getStreak(user.uid);
-    setStreak(updatedStreak);
-  }, [user]);
-
-  // Schedule debounced auto-save (~800ms)
-  const scheduleAutoSave = useCallback((newContent: string, newMood: string | null) => {
-    if (!user) return;
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current);
-    }
-    saveTimeoutRef.current = setTimeout(async () => {
-      const todayStr = format(new Date(), 'yyyy-MM-dd');
-      await saveDayDocument(user.uid, todayStr, newContent, newMood);
-      const updatedStreak = await getStreak(user.uid);
-      setStreak(updatedStreak);
-    }, 800);
-  }, [user]);
-
-  // AppState change listener for immediate flush on app background/device lock
+  // Real-time listener for today's document
   useEffect(() => {
-    const subscription = AppState.addEventListener('change', (nextAppState) => {
-      if (nextAppState.match(/inactive|background/)) {
-        flushSave();
+    if (!user) return;
+    const today = getTodayDateString();
+    const docId = `${user.uid}_${today}`;
+    
+    // Use a query instead of direct doc() reference.
+    // If a document doesn't exist yet, a direct doc() listener can fail with 
+    // permission-denied if security rules rely on resource.data.userId.
+    // A query avoids this crash and successfully listens for creation.
+    const q = query(
+      collection(db, 'days'),
+      where('userId', '==', user.uid),
+      where('date', '==', today)
+    );
+
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      if (!querySnapshot.empty) {
+        const docSnap = querySnapshot.docs[0];
+        setTodayDoc({ id: docSnap.id, ...docSnap.data() } as DayEntry);
+      } else {
+        setTodayDoc({
+          id: docId,
+          userId: user.uid,
+          date: today,
+          contentMarkdown: '',
+          mood: null,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        });
       }
+    }, (error) => {
+      console.warn('onSnapshot today query error:', error);
+      // Fallback so the screen isn't completely blank during permission errors
+      setTodayDoc({
+        id: docId,
+        userId: user.uid,
+        date: today,
+        contentMarkdown: '',
+        mood: null,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
     });
 
-    return () => {
-      subscription.remove();
-      flushSave();
-    };
-  }, [flushSave]);
+    return () => unsubscribe();
+  }, [user?.uid]);
 
-  // Initial load: Migrate entries to days, fetch today's document & streak
   const initialLoad = useCallback(async () => {
     if (!user) return;
     try {
       setLoading(true);
-      // Run one-time migration if needed
       await migrateEntriesToDays(user.uid);
+      await cleanupDuplicateDays(user.uid);
 
-      const [streakData, todayDoc] = await Promise.all([
+      const [streakData, initialPastDays, initialWeeklies, initialMonthlies] = await Promise.all([
         getStreak(user.uid),
-        getOrCreateTodayDocument(user.uid)
+        getPastDays(user.uid, undefined, 20),
+        getWeeklySummariesHistory(user.uid),
+        getMonthlySummariesHistory(user.uid)
       ]);
 
       setStreak(streakData);
-      const initialContent = todayDoc.contentMarkdown ? renumberContentLists(todayDoc.contentMarkdown) : '';
-      setContent(initialContent);
-      setMood(todayDoc.mood || null);
-      latestStateRef.current = { content: initialContent, mood: todayDoc.mood || null };
+      setListDays(initialPastDays);
+      setWeeklies(initialWeeklies);
+      setMonthlies(initialMonthlies);
+
+      setHasMore(initialPastDays.length >= 20);
+      if (initialPastDays.length > 0) {
+        setLastDocId(initialPastDays[initialPastDays.length - 1].id);
+      }
     } catch (error) {
-      console.error('Failed to load today page:', error);
+      console.error('Failed to load timeline data:', error);
     } finally {
       setLoading(false);
     }
   }, [user?.uid]);
 
-  // Check for unviewed previous week summary auto-prompt
-  const checkWeeklySummaryPrompt = useCallback(async () => {
-    if (!user) return;
-    const prevWeekMon = startOfWeek(subWeeks(new Date(), 1), { weekStartsOn: 1 });
-    const prevWeekId = format(prevWeekMon, "yyyy-'W'II");
-
-    if (lastSeenWeeklySummaryWeek !== prevWeekId) {
-      setLastSeenWeeklySummaryWeek(prevWeekId);
-      const summary = await generateAndSaveWeeklySummary(user.uid, subWeeks(new Date(), 1));
-      if (summary && summary.daysWrittenCount > 0) {
-        setWeeklySummary(summary);
-        setSummaryModalVisible(true);
+  const loadMorePastDays = async () => {
+    if (!user || !hasMore || listLoadingMore) return;
+    try {
+      setListLoadingMore(true);
+      const newDays = await getPastDays(user.uid, lastDocId, 20);
+      setHasMore(newDays.length >= 20);
+      if (newDays.length > 0) {
+        setLastDocId(newDays[newDays.length - 1].id);
+        setListDays(prev => {
+          // avoid duplicates just in case
+          const existingIds = new Set(prev.map(d => d.id));
+          const filteredNew = newDays.filter(d => !existingIds.has(d.id));
+          return [...prev, ...filteredNew];
+        });
       }
+    } catch (e) {
+      console.error('Failed to load more past days:', e);
+    } finally {
+      setListLoadingMore(false);
     }
-  }, [user?.uid, lastSeenWeeklySummaryWeek, setLastSeenWeeklySummaryWeek]);
+  };
 
-  useEffect(() => {
-    initialLoad();
-    checkWeeklySummaryPrompt();
-  }, [initialLoad, checkWeeklySummaryPrompt]);
-
-  // Screen focus refresh & blur flush
   useFocusEffect(
     useCallback(() => {
-      return () => {
-        flushSave();
-      };
-    }, [flushSave])
+      initialLoad();
+    }, [initialLoad])
   );
 
-  // Editor Selection & Formatting Helpers
-  const applySelection = (newPos: number) => {
-    isProgrammaticInsert.current = true;
-    setSelection({ start: newPos, end: newPos });
+  const timelineItems = useMemo(() => {
+    return mergeTimelineItems(listDays, todayDoc, weeklies, monthlies);
+  }, [listDays, todayDoc, weeklies, monthlies]);
 
-    setTimeout(() => {
-      inputRef.current?.focus();
-      if (Platform.OS === 'web' && inputRef.current) {
-        try {
-          const domInput = (inputRef.current as any)._inputElement || (inputRef.current as any).node || (inputRef.current as any);
-          if (domInput && typeof domInput.setSelectionRange === 'function') {
-            domInput.setSelectionRange(newPos, newPos);
-          }
-        } catch (e) {
-          // ignore web DOM exception
+  const handleOpenEntry = (id: string) => {
+    if (id === 'today') {
+      router.push(`/entry/${id}` as any);
+    } else {
+      router.push(`/read/${id}` as any);
+    }
+  };
+
+  const renderTimelineItem = ({ item, index }: { item: TimelineItem; index: number }) => {
+    // Find next DayEntry to determine if dashed line is needed
+    let isDashed = false;
+    let nextDayStr: string | null = null;
+    
+    // Scan ahead for the next actual day to see if there's a gap
+    for (let i = index + 1; i < timelineItems.length; i++) {
+      if (timelineItems[i].type === 'day' || timelineItems[i].type === 'today') {
+        nextDayStr = (timelineItems[i].data as DayEntry).date;
+        break;
+      }
+    }
+
+    if (item.type === 'day' || item.type === 'today') {
+      const currentDayStr = (item.data as DayEntry).date;
+      if (nextDayStr) {
+        const diff = differenceInDays(parseISO(currentDayStr), parseISO(nextDayStr));
+        if (diff > 1) {
+          isDashed = true;
         }
       }
-      setTimeout(() => {
-        isProgrammaticInsert.current = false;
-      }, 100);
-    }, 20);
-  };
-
-  const handleSelectionChange = (e: any) => {
-    if (isProgrammaticInsert.current) return;
-    setSelection(e.nativeEvent.selection);
-  };
-
-  const handleTextChange = (newText: string) => {
-    const cursorPos = selection.start;
-    const { content: processedContent, newCursorPos } = processEditorTextChange(content, newText, cursorPos);
-    
-    setContent(processedContent);
-    scheduleAutoSave(processedContent, mood);
-
-    if (newCursorPos !== cursorPos) {
-      applySelection(newCursorPos);
     }
-  };
 
-  const handleMoodSelect = (selectedMood: string) => {
-    const newMood = selectedMood === mood ? null : selectedMood;
-    setMood(newMood);
-    scheduleAutoSave(content, newMood);
-  };
+    const isLastItem = index === timelineItems.length - 1;
 
-  const insertText = (str: string) => {
-    const start = selection.start;
-    const end = selection.end;
-    const newText = content.substring(0, start) + str + content.substring(end);
-    const renumbered = renumberContentLists(newText);
-    const newPos = start + str.length;
-
-    setContent(renumbered);
-    scheduleAutoSave(renumbered, mood);
-    applySelection(newPos);
-  };
-
-  const cycleHeading = () => {
-    const start = selection.start;
-    const end = selection.end;
-    
-    const lineStart = content.lastIndexOf('\n', start - 1) + 1;
-    let lineEnd = content.indexOf('\n', end);
-    if (lineEnd === -1) lineEnd = content.length;
-    
-    const lineText = content.substring(lineStart, lineEnd);
-    let newHeadingPrefix = '# ';
-    let strippedLine = lineText;
-    
-    if (lineText.startsWith('### ')) {
-      newHeadingPrefix = '';
-      strippedLine = lineText.substring(4);
-    } else if (lineText.startsWith('## ')) {
-      newHeadingPrefix = '### ';
-      strippedLine = lineText.substring(3);
-    } else if (lineText.startsWith('# ')) {
-      newHeadingPrefix = '## ';
-      strippedLine = lineText.substring(2);
+    // Checkpoint Card
+    if (item.type === 'weekly_summary' || item.type === 'monthly_summary') {
+      const isWeekly = item.type === 'weekly_summary';
+      const summary = item.data as WeeklySummary | MonthlySummary;
+      const Icon = isWeekly ? Trophy : CalendarDays;
+      const accentColor = isWeekly ? theme.colors.weeklyCheckpoint : theme.colors.monthlyCheckpoint; // Distinguish visually
+      
+      return (
+        <View style={styles.nodeRow}>
+          <View style={styles.leftCol}>
+            <View style={[styles.checkpointNode, { backgroundColor: accentColor }]}>
+              <Icon size={16} color="#FFF" />
+            </View>
+            {!isLastItem && <View style={[styles.verticalLine, isDashed && styles.dashedLine]} />}
+          </View>
+          <TouchableOpacity 
+            style={styles.checkpointCard}
+            onPress={() => setSelectedSummary(summary)}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={styles.checkpointTitle}>
+                {isWeekly ? t('weeklySummary') : t('monthlySummary')}
+              </Text>
+              <Text style={styles.checkpointSub}>
+                {summary.daysWrittenCount} {t('daysWritten')} · {t('bestStreak')}: {
+                  isWeekly 
+                    ? (summary as WeeklySummary).streakAtEndOfWeek
+                    : (summary as MonthlySummary).longestStreakInMonth
+                }
+              </Text>
+            </View>
+          </TouchableOpacity>
+        </View>
+      );
     }
-    
-    const newLineText = newHeadingPrefix + strippedLine;
-    const newContent = content.substring(0, lineStart) + newLineText + content.substring(lineEnd);
-    const renumbered = renumberContentLists(newContent);
-    const posOffset = newLineText.length - lineText.length;
-    const newPos = Math.max(lineStart, end + posOffset);
 
-    setContent(renumbered);
-    scheduleAutoSave(renumbered, mood);
-    applySelection(newPos);
-  };
-
-  const toggleListMarkdown = (type: 'bullet' | 'number') => {
-    const start = selection.start;
-    const end = selection.end;
+    // Day Node (Today or Past Day)
+    const day = item.data as DayEntry;
+    const isToday = item.type === 'today';
+    const hasContent = day.contentMarkdown && day.contentMarkdown.trim().length > 0;
     
-    const lineStart = content.lastIndexOf('\n', start - 1) + 1;
-    let lineEnd = content.indexOf('\n', end);
-    if (lineEnd === -1) lineEnd = content.length;
-    
-    const lineText = content.substring(lineStart, lineEnd);
-    const isBullet = /^(\s*)([-*•])\s+/.test(lineText);
-    const isNumber = /^(\s*)(\d+)\.\s+/.test(lineText);
-
-    let newLineText = '';
-    if (type === 'bullet') {
-      if (isBullet) {
-        newLineText = lineText.replace(/^(\s*)([-*•])\s+/, '$1');
-      } else {
-        const stripped = lineText.replace(/^(\s*)(\d+)\.\s+/, '$1');
-        newLineText = `- ${stripped}`;
-      }
-    } else if (type === 'number') {
-      if (isNumber) {
-        newLineText = lineText.replace(/^(\s*)(\d+)\.\s+/, '$1');
-      } else {
-        const stripped = lineText.replace(/^(\s*)([-*•])\s+/, '$1');
-        newLineText = `1. ${stripped}`;
+    // Parse first line for preview
+    let previewText = '';
+    if (hasContent) {
+      const firstLine = day.contentMarkdown.split('\n').find(line => line.trim().length > 0);
+      if (firstLine) {
+        // Strip markdown: 
+        // 1. Remove list markers (- , * , 1. ) at start of lines
+        // 2. Remove formatting like **bold**, *italic*, __bold__, _italic_, ~~strike~~, `code`, [link](url), and > blockquotes
+        previewText = firstLine
+          .replace(/^(\s*(-|\*|\d+\.)\s+)/gm, '') 
+          .replace(/^(#+\s+)/gm, '')
+          .replace(/\*\*(.*?)\*\*/g, '$1')
+          .replace(/\*(.*?)\*/g, '$1')
+          .replace(/__(.*?)__/g, '$1')
+          .replace(/_(.*?)_/g, '$1')
+          .replace(/~~(.*?)~~/g, '$1')
+          .replace(/`(.*?)`/g, '$1')
+          .replace(/\[(.*?)\]\(.*?\)/g, '$1')
+          .replace(/^>\s+/gm, '')
+          .trim()
+          .substring(0, 60);
+          
+        if (firstLine.length > 60) previewText += '...';
       }
     }
 
-    const rawContent = content.substring(0, lineStart) + newLineText + content.substring(lineEnd);
-    const updatedContent = renumberContentLists(rawContent);
-    const posOffset = newLineText.length - lineText.length;
-    const newPos = Math.max(lineStart, end + posOffset);
+    const d = parseISO(day.date);
+    const { compactHeader } = formatDateDual(d);
+    // Split the compact header to just show a short date
+    const shortDate = format(d, 'MMM d, yyyy');
 
-    setContent(updatedContent);
-    scheduleAutoSave(updatedContent, mood);
-    applySelection(newPos);
-  };
-
-  const insertMarkdown = (prefix: string, suffix: string = '') => {
-    const start = selection.start;
-    const end = selection.end;
-    const selectedText = content.substring(start, end);
-    const newText = content.substring(0, start) + prefix + selectedText + suffix + content.substring(end);
-    const renumbered = renumberContentLists(newText);
-    const newPos = start + prefix.length + selectedText.length + suffix.length;
-
-    setContent(renumbered);
-    scheduleAutoSave(renumbered, mood);
-    applySelection(newPos);
+    return (
+      <TouchableOpacity 
+        style={styles.nodeRow}
+        activeOpacity={0.7}
+        onPress={() => handleOpenEntry(isToday ? 'today' : day.date)}
+      >
+        <View style={styles.leftCol}>
+          {isToday ? (
+            <View style={styles.todayNodeRing}>
+              <View style={styles.todayNode}>
+                {day.mood ? (
+                  <Text style={styles.nodeEmoji}>{day.mood}</Text>
+                ) : (
+                  <Plus size={16} color={theme.colors.accent} />
+                )}
+              </View>
+            </View>
+          ) : (
+            <View style={[styles.pastNode, !day.mood && styles.pastNodeEmpty]}>
+              {day.mood && <Text style={styles.pastNodeEmoji}>{day.mood}</Text>}
+            </View>
+          )}
+          {!isLastItem && (
+            <View style={[
+              styles.verticalLine, 
+              isDashed && styles.dashedLine,
+              isToday && { marginTop: 4 } // Adjust for larger ring
+            ]} />
+          )}
+        </View>
+        <View style={styles.rightCol}>
+          <Text style={[styles.dayDateText, isToday && styles.todayDateText]}>
+            {isToday ? t('today') : shortDate}
+          </Text>
+          {hasContent ? (
+            <Text style={styles.dayPreviewText}>{previewText}</Text>
+          ) : (
+            isToday && <Text style={styles.emptyPromptText}>{t('noReflectionsSub')}</Text>
+          )}
+        </View>
+      </TouchableOpacity>
+    );
   };
 
   const { secondaryDate, time } = formatDateDual(new Date());
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
-    >
+    <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.streakBadge}>
@@ -362,128 +359,45 @@ export default function TimelineScreen() {
         </View>
 
         <View style={styles.headerActions}>
-          <TouchableOpacity onPress={() => { flushSave(); router.push('/history'); }} style={styles.iconButton}>
-            <Clock size={24} color={theme.colors.textPrimary} />
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => { flushSave(); router.push('/search'); }} style={styles.iconButton}>
+          <TouchableOpacity onPress={() => router.push('/search')} style={styles.iconButton}>
             <Search size={24} color={theme.colors.textPrimary} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => { flushSave(); router.push('/settings'); }} style={styles.iconButton}>
+          <TouchableOpacity onPress={() => router.push('/settings')} style={styles.iconButton}>
             <Settings size={24} color={theme.colors.textPrimary} />
           </TouchableOpacity>
         </View>
       </View>
 
-      {/* Main Today Journal Editor View */}
-      {loading ? (
+      {/* Main Timeline Feed */}
+      {loading && timelineItems.length === 0 ? (
         <View style={styles.centerContainer}>
           <ActivityIndicator color={theme.colors.accent} />
         </View>
       ) : (
-        <ScrollView style={styles.contentContainer}>
-          {/* Single Mood Picker for the Day (Last Tap Wins) */}
-          <View style={styles.moodContainer}>
-            {MOODS.map(m => (
-              <TouchableOpacity
-                key={m}
-                onPress={() => handleMoodSelect(m)}
-                style={[styles.moodItem, mood === m && styles.moodItemSelected]}
-              >
-                <Text style={styles.moodEmoji}>{m}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          {/* Bordered Editor Container for Today's Reflection */}
-          <View style={styles.editorContainer}>
-            <TextInput
-              ref={inputRef}
-              style={styles.editor}
-              multiline
-              placeholder={t('placeholderContent')}
-              placeholderTextColor={theme.colors.textSecondary}
-              value={content}
-              onChangeText={handleTextChange}
-              selection={selection}
-              onSelectionChange={handleSelectionChange}
-              textAlignVertical="top"
-            />
-          </View>
-        </ScrollView>
+        <FlatList
+          data={timelineItems}
+          keyExtractor={(item) => item.id}
+          renderItem={renderTimelineItem}
+          contentContainerStyle={styles.listContent}
+          onEndReached={loadMorePastDays}
+          onEndReachedThreshold={0.5}
+          ListFooterComponent={
+            listLoadingMore ? <ActivityIndicator color={theme.colors.accent} style={{ marginVertical: 20 }} /> : null
+          }
+        />
       )}
 
-      {/* Quick Insert Strip */}
-      {showQuickInsert && (
-        <View style={styles.quickInsertContainer}>
-          <View style={styles.categoryTabs}>
-            <TouchableOpacity
-              onPress={() => setQuickCategory('emoji')}
-              style={[styles.categoryTab, quickCategory === 'emoji' && styles.categoryTabActive]}
-            >
-              <Text style={[styles.categoryTabText, quickCategory === 'emoji' && styles.categoryTabTextActive]}>
-                {t('emojiTab')}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => setQuickCategory('symbol')}
-              style={[styles.categoryTab, quickCategory === 'symbol' && styles.categoryTabActive]}
-            >
-              <Text style={[styles.categoryTabText, quickCategory === 'symbol' && styles.categoryTabTextActive]}>
-                {t('symbolTab')}
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.quickScrollContent}
-          >
-            {(quickCategory === 'emoji' ? QUICK_EMOJIS : QUICK_SYMBOLS).map((item, index) => (
-              <TouchableOpacity key={index} style={styles.quickItem} onPress={() => insertText(item)}>
-                <Text style={styles.quickItemText}>{item}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </View>
-      )}
-
-      {/* Formatting Toolbar */}
-      <View style={styles.toolbar}>
-        <TouchableOpacity style={styles.toolbarBtn} onPress={() => insertMarkdown('**', '**')}>
-          <Bold size={20} color={theme.colors.textPrimary} />
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.toolbarBtn} onPress={() => insertMarkdown('*', '*')}>
-          <Italic size={20} color={theme.colors.textPrimary} />
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.toolbarBtn} onPress={cycleHeading}>
-          <Heading size={20} color={theme.colors.textPrimary} />
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.toolbarBtn} onPress={() => toggleListMarkdown('bullet')}>
-          <List size={20} color={theme.colors.textPrimary} />
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.toolbarBtn} onPress={() => toggleListMarkdown('number')}>
-          <ListOrdered size={20} color={theme.colors.textPrimary} />
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.toolbarBtn, showQuickInsert && styles.toolbarBtnActive]}
-          onPress={() => setShowQuickInsert(!showQuickInsert)}
-        >
-          <Smile size={20} color={showQuickInsert ? theme.colors.accent : theme.colors.textPrimary} />
-        </TouchableOpacity>
-      </View>
-
-      {/* Auto-Prompt Weekly Summary Modal */}
+      {/* Reusable Summary Modal */}
       <WeeklySummaryModal
-        visible={summaryModalVisible}
-        summary={weeklySummary}
-        onClose={() => setSummaryModalVisible(false)}
+        visible={!!selectedSummary}
+        summary={selectedSummary}
+        onClose={() => setSelectedSummary(null)}
       />
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,
@@ -497,11 +411,13 @@ const styles = StyleSheet.create({
     paddingBottom: theme.spacing.md,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
+    backgroundColor: theme.colors.surface,
+    zIndex: 10,
   },
   streakBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: theme.colors.surface,
+    backgroundColor: theme.colors.background,
     paddingHorizontal: theme.spacing.sm + 2,
     paddingVertical: theme.spacing.xs + 2,
     borderRadius: 20,
@@ -545,124 +461,130 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  contentContainer: {
-    flex: 1,
-    padding: theme.spacing.md,
+  listContent: {
+    paddingVertical: theme.spacing.lg,
+    paddingHorizontal: theme.spacing.md,
   },
-  moodContainer: {
+  nodeRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: theme.spacing.md,
-    paddingHorizontal: theme.spacing.lg,
   },
-  moodItem: {
-    minWidth: 44,
-    minHeight: 44,
+  leftCol: {
+    width: 50,
+    alignItems: 'center',
+  },
+  rightCol: {
+    flex: 1,
+    paddingBottom: 32, // space between rows
+    paddingTop: 4, // align with node
+  },
+  verticalLine: {
+    width: 2,
+    flex: 1,
+    backgroundColor: theme.colors.border,
+    marginTop: 4,
+    marginBottom: -8, // slight overlap to next row
+  },
+  dashedLine: {
+    borderStyle: 'dashed',
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: 'transparent',
+    width: 1,
+  },
+  // Today Node
+  todayNodeRing: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 2,
+    borderColor: theme.colors.accent,
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: 22,
+    backgroundColor: theme.colors.background,
+  },
+  todayNode: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: theme.colors.surface,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  nodeEmoji: {
+    fontSize: 16,
+  },
+  // Past Day Node
+  pastNode: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: theme.colors.surface,
     borderWidth: 1,
-    borderColor: 'transparent',
+    borderColor: theme.colors.border,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 4,
   },
-  moodItemSelected: {
-    borderColor: theme.colors.accent,
-    backgroundColor: theme.colors.surface,
+  pastNodeEmpty: {
+    borderStyle: 'dashed',
+    backgroundColor: 'transparent',
   },
-  moodEmoji: {
-    fontSize: 24,
+  pastNodeEmoji: {
+    fontSize: 14,
   },
-  editorContainer: {
+  // Checkpoint Node
+  checkpointNode: {
+    width: 28,
+    height: 28,
+    borderRadius: 8, // Square-ish icon instead of circle
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  // Row Text
+  dayDateText: {
+    fontSize: theme.typography.sizes.regular,
+    fontFamily: theme.typography.fontFamily.bold,
+    color: theme.colors.textPrimary,
+    marginBottom: 4,
+  },
+  todayDateText: {
+    color: theme.colors.accent,
+  },
+  dayPreviewText: {
+    fontSize: theme.typography.sizes.regular,
+    fontFamily: theme.typography.fontFamily.regular,
+    color: theme.colors.textSecondary,
+    lineHeight: 22,
+  },
+  emptyPromptText: {
+    fontSize: theme.typography.sizes.regular,
+    fontFamily: theme.typography.fontFamily.regular,
+    fontStyle: 'italic',
+    color: theme.colors.textSecondary,
+  },
+  // Checkpoint Card Text
+  checkpointCard: {
     flex: 1,
-    minHeight: 320,
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: theme.colors.surface,
+    padding: theme.spacing.md,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: theme.colors.border,
-    padding: theme.spacing.md,
-    marginBottom: theme.spacing.md,
+    marginBottom: 32,
+    marginTop: 2,
   },
-  editor: {
-    flex: 1,
-    minHeight: 290,
+  checkpointTitle: {
     fontSize: theme.typography.sizes.regular,
-    fontFamily: theme.typography.fontFamily.regular,
-    color: theme.colors.textPrimary,
-    lineHeight: 24,
-  },
-  quickInsertContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: theme.spacing.xs + 2,
-    paddingHorizontal: theme.spacing.sm,
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.border,
-    backgroundColor: theme.colors.surface,
-  },
-  categoryTabs: {
-    flexDirection: 'row',
-    marginRight: theme.spacing.xs,
-    borderRightWidth: 1,
-    borderRightColor: theme.colors.border,
-    paddingRight: theme.spacing.xs,
-  },
-  categoryTab: {
-    paddingHorizontal: 12,
-    height: 34,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: 17,
-    marginRight: 6,
-    backgroundColor: 'transparent',
-  },
-  categoryTabActive: {
-    backgroundColor: theme.colors.accent,
-  },
-  categoryTabText: {
-    fontSize: theme.typography.sizes.small,
-    fontFamily: theme.typography.fontFamily.medium,
-    color: theme.colors.textSecondary,
-  },
-  categoryTabTextActive: {
-    color: '#FFFFFF',
     fontFamily: theme.typography.fontFamily.bold,
-  },
-  quickScrollContent: {
-    alignItems: 'center',
-    paddingRight: theme.spacing.md,
-  },
-  quickItem: {
-    height: 34,
-    minWidth: 34,
-    paddingHorizontal: 8,
-    marginHorizontal: 3,
-    borderRadius: 17,
-    backgroundColor: theme.colors.background,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  quickItemText: {
-    fontSize: 16,
     color: theme.colors.textPrimary,
+    marginBottom: 4,
   },
-  toolbar: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingVertical: theme.spacing.xs,
-    paddingHorizontal: theme.spacing.sm,
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.border,
-    backgroundColor: theme.colors.surface,
-  },
-  toolbarBtn: {
-    minWidth: 44,
-    minHeight: 44,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  toolbarBtnActive: {
-    backgroundColor: theme.colors.border,
-    borderRadius: 8,
+  checkpointSub: {
+    fontSize: theme.typography.sizes.small,
+    fontFamily: theme.typography.fontFamily.regular,
+    color: theme.colors.textSecondary,
   },
 });

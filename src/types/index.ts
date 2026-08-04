@@ -28,3 +28,15 @@ export interface WeeklySummary {
   streakAtEndOfWeek: number;
   createdAt: number;
 }
+
+export interface MonthlySummary {
+  id?: string; // {userId}_{YYYY-MM}
+  userId: string;
+  month: string; // YYYY-MM
+  startDate: string; // YYYY-MM-01
+  endDate: string; // YYYY-MM-DD (last day of month)
+  daysWrittenCount: number; // e.g. 20
+  moodBreakdown: Record<string, number>;
+  longestStreakInMonth: number;
+  createdAt: number;
+}

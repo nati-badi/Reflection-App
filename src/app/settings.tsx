@@ -1,15 +1,17 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Switch, Alert, Platform, Modal, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Switch, Alert, Platform, Modal, ScrollView, ActivityIndicator, TextInput } from 'react-native';
 import { useRouter } from 'expo-router';
 import { signOut } from 'firebase/auth';
 import { auth } from '../config/firebase';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { useTranslation } from '../hooks/useTranslation';
-import { getStreak } from '../services/db';
+import { getStreak, deleteUserAccount } from '../services/db';
+import { exportJournalData, exportJournalDataAsPdf } from '../services/exportService';
 import type { StreakMeta } from '../types';
-import { theme } from '../constants/theme';
-import { ArrowLeft, LogOut, Flame, Trophy, Check, X } from 'lucide-react-native';
+import { Theme } from '../constants/theme';
+import { useAppTheme } from '../hooks/useAppTheme';
+import { ArrowLeft, LogOut, Flame, Trophy, Check, X, Download, FileText, AlertTriangle } from 'lucide-react-native';
 import * as Notifications from 'expo-notifications';
 
 const REMINDER_TIME_OPTIONS = ['18:00', '19:00', '19:30', '20:00', '20:30', '21:00', '21:30', '22:00', '22:30', '23:00', '23:30', '00:00'];
@@ -17,9 +19,50 @@ const REMINDER_TIME_OPTIONS = ['18:00', '19:00', '19:30', '20:00', '20:30', '21:
 export default function SettingsScreen() {
   const router = useRouter();
   const { user } = useAuthStore();
+  const { theme } = useAppTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
   const { t, language, setLanguage, formatDateDual } = useTranslation();
   const [streak, setStreak] = useState<StreakMeta | null>(null);
   const [isTimePickerVisible, setTimePickerVisible] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [isDeleteModalVisible, setDeleteModalVisible] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const handleExport = async () => {
+    if (!user) return;
+    setIsExporting(true);
+    try {
+      const res = await exportJournalData(user.uid, language as 'en' | 'am');
+      if (res.success) {
+        Alert.alert(t('exportSuccess'), 'Your reflections backup has been exported.');
+      } else if (res.message) {
+        Alert.alert(t('exportError'), res.message);
+      }
+    } catch (e: any) {
+      Alert.alert(t('exportError'), e.message || 'Failed to export data');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleExportPdf = async () => {
+    if (!user) return;
+    setIsExportingPdf(true);
+    try {
+      const res = await exportJournalDataAsPdf(user.uid, language as 'en' | 'am');
+      if (res.success) {
+        Alert.alert(t('exportSuccess'), 'Your PDF backup has been exported.');
+      } else if (res.message) {
+        Alert.alert(t('exportError'), res.message);
+      }
+    } catch (e: any) {
+      Alert.alert(t('exportError'), e.message || 'Failed to export PDF');
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
 
   const { 
     isBiometricEnabled, 
@@ -27,7 +70,9 @@ export default function SettingsScreen() {
     lockTimeoutMinutes, 
     setLockTimeoutMinutes,
     reminderTime,
-    setReminderTime
+    setReminderTime,
+    themePreference,
+    setThemePreference
   } = useSettingsStore();
 
   useEffect(() => {
@@ -54,6 +99,62 @@ export default function SettingsScreen() {
       router.replace('/(auth)/login');
     } catch (e) {
       Alert.alert('Error', t('signOutError'));
+    }
+  };
+
+  const handleDeleteAccountInitiate = () => {
+    if (!user) return;
+    const lastSignIn = user.metadata.lastSignInTime;
+    const isRecent = lastSignIn && (Date.now() - new Date(lastSignIn).getTime() < 5 * 60 * 1000);
+    
+    if (!isRecent) {
+      Alert.alert(
+        'Re-authentication Required',
+        'For security, you must sign out and sign back in to confirm your identity before deleting your account.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Sign Out', style: 'destructive', onPress: handleSignOut }
+        ]
+      );
+      return;
+    }
+
+    Alert.alert(
+      'Delete Account',
+      'This will permanently delete your account and ALL your reflections. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Continue', 
+          style: 'destructive', 
+          onPress: () => {
+            setDeleteConfirmText('');
+            setDeleteModalVisible(true);
+          }
+        }
+      ]
+    );
+  };
+
+  const handleDeleteAccountConfirm = async () => {
+    if (deleteConfirmText !== 'DELETE' || !user) return;
+    
+    setIsDeleting(true);
+    try {
+      await deleteUserAccount(user.uid, auth.currentUser);
+      // AsyncStorage clear is handled in deleteUserAccount or we can do it here. 
+      // The user requested to clear local settings. We will just use useSettingsStore reset if needed, but signing out is enough for the user flow.
+      // Wait, we should clear AsyncStorage.
+      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+      await AsyncStorage.clear();
+      
+      setDeleteModalVisible(false);
+      Alert.alert('Account Deleted', 'Your account and data have been deleted.', [
+        { text: 'OK', onPress: () => router.replace('/(auth)/login') }
+      ]);
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed to delete account. Please try again.');
+      setIsDeleting(false);
     }
   };
 
@@ -111,8 +212,36 @@ export default function SettingsScreen() {
         <View style={{ width: 40 }} />
       </View>
 
-      {/* Language Section */}
+      {/* Appearance & Language Section */}
       <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Appearance</Text>
+        <View style={[styles.languageToggleContainer, { marginBottom: theme.spacing.md }]}>
+          <TouchableOpacity 
+            style={[styles.languagePill, themePreference === 'system' && styles.languagePillActive]}
+            onPress={() => setThemePreference('system')}
+          >
+            <Text style={[styles.languagePillText, themePreference === 'system' && styles.languagePillTextActive]}>
+              System
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={[styles.languagePill, themePreference === 'light' && styles.languagePillActive]}
+            onPress={() => setThemePreference('light')}
+          >
+            <Text style={[styles.languagePillText, themePreference === 'light' && styles.languagePillTextActive]}>
+              Light
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={[styles.languagePill, themePreference === 'dark' && styles.languagePillActive]}
+            onPress={() => setThemePreference('dark')}
+          >
+            <Text style={[styles.languagePillText, themePreference === 'dark' && styles.languagePillTextActive]}>
+              Dark
+            </Text>
+          </TouchableOpacity>
+        </View>
+
         <Text style={styles.sectionTitle}>{t('language')}</Text>
         <View style={styles.languageToggleContainer}>
           <TouchableOpacity 
@@ -171,17 +300,17 @@ export default function SettingsScreen() {
           />
         </View>
 
-        <View style={[styles.settingRow, !isBiometricEnabled && { opacity: 0.5 }]}>
+        <View style={[styles.settingRow, !isBiometricEnabled && styles.settingRowDisabled]}>
           <View>
-            <Text style={styles.settingLabel}>{t('lockTimeout')}</Text>
-            <Text style={styles.settingDescription}>{t('lockTimeoutDesc')}</Text>
+            <Text style={[styles.settingLabel, !isBiometricEnabled && styles.disabledText]}>{t('lockTimeout')}</Text>
+            <Text style={[styles.settingDescription, !isBiometricEnabled && styles.disabledText]}>{t('lockTimeoutDesc')}</Text>
           </View>
           <TouchableOpacity 
-            style={styles.actionButton}
+            style={[styles.actionButton, !isBiometricEnabled && styles.actionButtonDisabled]}
             onPress={() => setLockTimeoutMinutes(lockTimeoutMinutes === 1 ? 5 : 1)}
             disabled={!isBiometricEnabled}
           >
-            <Text style={styles.actionButtonText}>{lockTimeoutMinutes} {t('minutesUnit')}</Text>
+            <Text style={[styles.actionButtonText, !isBiometricEnabled && styles.disabledText]}>{lockTimeoutMinutes} {t('minutesUnit')}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -200,11 +329,66 @@ export default function SettingsScreen() {
         </View>
       </View>
 
+      {/* Data & Backup */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>{t('dataAndBackup')}</Text>
+        <View style={styles.settingRow}>
+          <View style={{ flex: 1, marginRight: theme.spacing.sm }}>
+            <Text style={styles.settingLabel}>{t('exportData')} (Markdown)</Text>
+            <Text style={styles.settingDescription}>{t('exportSub')}</Text>
+          </View>
+          <TouchableOpacity
+            style={[styles.actionButton, isExporting && { opacity: 0.6 }]}
+            onPress={handleExport}
+            disabled={isExporting || isExportingPdf}
+          >
+            {isExporting ? (
+              <ActivityIndicator size="small" color={theme.colors.textPrimary} />
+            ) : (
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Download size={16} color={theme.colors.textPrimary} style={{ marginRight: 6 }} />
+                <Text style={styles.actionButtonText}>Export</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.settingRow}>
+          <View style={{ flex: 1, marginRight: theme.spacing.sm }}>
+            <Text style={styles.settingLabel}>Export as PDF</Text>
+            <Text style={styles.settingDescription}>Download a readable PDF document of all your reflections.</Text>
+          </View>
+          <TouchableOpacity
+            style={[styles.actionButton, isExportingPdf && { opacity: 0.6 }]}
+            onPress={handleExportPdf}
+            disabled={isExporting || isExportingPdf}
+          >
+            {isExportingPdf ? (
+              <ActivityIndicator size="small" color={theme.colors.textPrimary} />
+            ) : (
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <FileText size={16} color={theme.colors.textPrimary} style={{ marginRight: 6 }} />
+                <Text style={styles.actionButtonText}>Export</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        </View>
+      </View>
+
       {/* Sign Out */}
       <View style={styles.section}>
         <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut}>
           <LogOut size={20} color={theme.colors.error} style={{ marginRight: theme.spacing.sm }} />
           <Text style={styles.signOutText}>{t('signOut')}</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Danger Zone */}
+      <View style={[styles.section, { borderTopWidth: 1, borderTopColor: theme.colors.border, paddingTop: 24, marginTop: 12 }]}>
+        <Text style={[styles.sectionTitle, { color: theme.colors.error }]}>Danger Zone</Text>
+        <TouchableOpacity style={[styles.signOutButton, { backgroundColor: theme.colors.error + '1A', borderColor: theme.colors.error, borderWidth: 1 }]} onPress={handleDeleteAccountInitiate}>
+          <AlertTriangle size={20} color={theme.colors.error} style={{ marginRight: theme.spacing.sm }} />
+          <Text style={styles.signOutText}>Delete Account</Text>
         </TouchableOpacity>
       </View>
 
@@ -233,9 +417,7 @@ export default function SettingsScreen() {
                 const [h, m] = timeStr.split(':').map(Number);
                 const d = new Date();
                 d.setHours(h, m, 0, 0);
-                const formatted = formatDateDual(d).time;
                 const isSelected = reminderTime === timeStr;
-
                 return (
                   <TouchableOpacity
                     key={timeStr}
@@ -243,9 +425,9 @@ export default function SettingsScreen() {
                     onPress={() => handleSelectTime(timeStr)}
                   >
                     <Text style={[styles.timeOptionText, isSelected && styles.timeOptionTextSelected]}>
-                      {formatted}
+                      {formatDateDual(d).time}
                     </Text>
-                    {isSelected && <Check size={18} color={theme.colors.accent} />}
+                    {isSelected && <Check size={20} color={theme.colors.accent} />}
                   </TouchableOpacity>
                 );
               })}
@@ -253,11 +435,60 @@ export default function SettingsScreen() {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {/* Delete Account Modal */}
+      <Modal
+        visible={isDeleteModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !isDeleting && setDeleteModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { padding: 24 }]}>
+            <Text style={[styles.modalTitle, { color: theme.colors.error, marginBottom: 12 }]}>Delete Account</Text>
+            <Text style={[styles.settingDescription, { marginBottom: 20 }]}>
+              Type <Text style={{ fontWeight: 'bold', color: theme.colors.textPrimary }}>DELETE</Text> to confirm you want to permanently delete your account and all data.
+            </Text>
+            
+            <TextInput
+              style={[styles.input, { marginBottom: 24 }]}
+              value={deleteConfirmText}
+              onChangeText={setDeleteConfirmText}
+              placeholder="DELETE"
+              placeholderTextColor={theme.colors.textSecondary}
+              autoCapitalize="characters"
+              editable={!isDeleting}
+            />
+
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12 }}>
+              <TouchableOpacity 
+                style={[styles.actionButton, { backgroundColor: 'transparent' }]} 
+                onPress={() => setDeleteModalVisible(false)}
+                disabled={isDeleting}
+              >
+                <Text style={[styles.actionButtonText, { color: theme.colors.textSecondary }]}>Cancel</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={[styles.actionButton, { backgroundColor: theme.colors.error }, (deleteConfirmText !== 'DELETE' || isDeleting) && { opacity: 0.5 }]} 
+                onPress={handleDeleteAccountConfirm}
+                disabled={deleteConfirmText !== 'DELETE' || isDeleting}
+              >
+                {isDeleting ? (
+                  <ActivityIndicator size="small" color="#FFF" />
+                ) : (
+                  <Text style={[styles.actionButtonText, { color: '#FFF' }]}>Delete</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,
@@ -320,7 +551,7 @@ const styles = StyleSheet.create({
     color: theme.colors.textSecondary,
   },
   languagePillTextActive: {
-    color: '#FFFFFF',
+    color: theme.colors.accentForeground,
     fontFamily: theme.typography.fontFamily.bold,
   },
   settingRow: {
@@ -328,6 +559,16 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: theme.spacing.md,
+  },
+  settingRowDisabled: {
+    opacity: 0.5,
+  },
+  disabledText: {
+    color: theme.colors.textSecondary,
+  },
+  actionButtonDisabled: {
+    borderColor: 'transparent',
+    backgroundColor: theme.colors.border,
   },
   settingLabel: {
     fontSize: theme.typography.sizes.regular,
@@ -421,5 +662,14 @@ const styles = StyleSheet.create({
   timeOptionTextSelected: {
     fontFamily: theme.typography.fontFamily.bold,
     color: theme.colors.accent,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: 8,
+    padding: 12,
+    color: theme.colors.textPrimary,
+    fontFamily: theme.typography.fontFamily.regular,
+    fontSize: theme.typography.sizes.regular,
   },
 });

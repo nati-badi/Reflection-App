@@ -36,14 +36,17 @@ export const translations = {
     noPastEntries: 'No past reflections found.',
     noSearchResults: 'No matching entries found.',
 
-    // Weekly Summary
+    // Weekly & Monthly Summary
     weeklySummary: 'Weekly Summary',
+    monthlySummary: 'Monthly Summary',
     daysWritten: 'Days Written',
     totalEntries: 'Total Entries',
     moodBreakdown: 'Mood Breakdown',
     endOfWeekStreak: 'Streak at End of Week',
+    longestStreakInMonth: 'Longest Streak in Month',
     previousWeek: 'Previous Week',
     viewSummaries: 'View Summaries',
+    viewMonthlySummaries: 'View Monthly Summaries',
     close: 'Close',
 
     // Entry Editor
@@ -57,28 +60,34 @@ export const translations = {
     loadError: 'Failed to load entry',
     saveError: 'Failed to save entry',
 
-    // Settings & Security
+    // Settings & Security & Backup
     language: 'Language',
     languageEn: 'English',
     languageAm: 'አማርኛ',
     reflectionStats: 'Reflection Stats',
+    dataAndBackup: 'Data & Backup',
+    exportData: 'Export My Data',
+    exportSub: 'Export all reflections as a Markdown file',
+    exportingData: 'Exporting data...',
+    exportSuccess: 'Export ready',
+    exportError: 'Failed to export data',
     security: 'Security',
     appLock: 'App Lock',
-    appLockDesc: 'Require biometric/passcode to open',
+    appLockDesc: 'Require passcode / biometrics to open app',
     lockTimeout: 'Lock Timeout',
-    lockTimeoutDesc: 'Idle time before lock',
+    lockTimeoutDesc: 'Time away before app locks automatically',
     minutesUnit: 'min',
     notifications: 'Notifications',
     dailyReminder: 'Daily Reminder',
-    dailyReminderDesc: 'Time to get a push notification',
+    dailyReminderDesc: 'Time to receive daily push notification',
     selectReminderTime: 'Select Reminder Time',
     cancel: 'Cancel',
-    reminderTitle: 'Time to reflect',
-    reminderBody: "Don't lose your streak — reflect on today",
-    webModeNotice: 'Push notifications are only available on the iOS and Android apps.',
-    permissionRequired: 'Permission required',
-    enableNotificationsMsg: 'Please enable notifications in your phone settings.',
-    reminderSetMsg: 'Daily reminder set for',
+    reminderTitle: 'Time to Reflect',
+    reminderBody: "Don't break your streak — write your daily entry!",
+    webModeNotice: 'Push notifications are only supported on native mobile apps.',
+    permissionRequired: 'Permission Required',
+    enableNotificationsMsg: 'Please enable notifications in device settings.',
+    reminderSetMsg: 'Daily reminder set for ',
     signOut: 'Sign Out',
     signOutError: 'Failed to sign out',
 
@@ -86,7 +95,7 @@ export const translations = {
     welcomeBack: 'Welcome Back',
     passcodePrompt: 'Enter passcode to unlock',
     login: 'Log In',
-    register: 'Sign Up',
+    register: 'Register',
     email: 'Email',
     password: 'Password',
     biometricError: 'Authentication failed',
@@ -112,14 +121,17 @@ export const translations = {
     noPastEntries: 'ምንም ያለፉ ማስታወሻዎች አልተገኙም።',
     noSearchResults: 'ተዛማጅ ማስታወሻ አልተገኘም።',
 
-    // Weekly Summary
+    // Weekly & Monthly Summary
     weeklySummary: 'የሳምንት ማጠቃለያ',
+    monthlySummary: 'የወር ማጠቃለያ',
     daysWritten: 'የተጻፉባቸው ቀናት',
     totalEntries: 'ጠቅላላ ማስታወሻዎች',
     moodBreakdown: 'የስሜት ስታቲስቲክስ',
     endOfWeekStreak: 'የሳምንቱ መጨረሻ ተከታታይነት',
+    longestStreakInMonth: 'በወሩ ውስጥ ረጅሙ ተከታታይነት',
     previousWeek: 'ያለፈው ሳምንት',
     viewSummaries: 'ማጠቃለያዎችን ተመልከት',
+    viewMonthlySummaries: 'የወር ማጠቃለያዎችን ተመልከት',
     close: 'ዝጋ',
 
     // Entry Editor
@@ -133,11 +145,17 @@ export const translations = {
     loadError: 'ማስታወሻውን መጫን አልተቻለም',
     saveError: 'ማስታወሻውን ማስቀመጥ አልተቻለም',
 
-    // Settings & Security
+    // Settings & Security & Backup
     language: 'ቋንቋ',
     languageEn: 'English',
     languageAm: 'አማርኛ',
     reflectionStats: 'የማስታወሻ ስታቲስቲክስ',
+    dataAndBackup: 'መረጃ እና ባክአፕ',
+    exportData: 'መረጃዬን ኤክስፖርት አድርግ',
+    exportSub: 'ሁሉንም ማስታወሻዎችዎ በMarkdown ፋይል ኤክስፖርት ያድርጉ',
+    exportingData: 'መረጃ በኤክስፖርት ላይ...',
+    exportSuccess: 'ኤክስፖርት ዝግጁ ነው',
+    exportError: 'ኤክስፖርት ማድረግ አልተሳካም',
     security: 'ደህንነት',
     appLock: 'መተግበሪያ ቆልፍ',
     appLockDesc: 'ለመክፈት የጣት አሻራ/የይለፍ ቃል ያስፈልጋል',

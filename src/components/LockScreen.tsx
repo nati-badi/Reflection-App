@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { useSettingsStore } from '../store/useSettingsStore';
-import { theme } from '../constants/theme';
+import { Theme } from '../constants/theme';
+import { useAppTheme } from '../hooks/useAppTheme';
 import { Lock } from 'lucide-react-native';
 
 interface LockScreenProps {
@@ -11,6 +12,8 @@ interface LockScreenProps {
 
 export const LockScreen: React.FC<LockScreenProps> = ({ onUnlock }) => {
   const { isBiometricEnabled } = useSettingsStore();
+  const { theme } = useAppTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
   const [error, setError] = useState<string | null>(null);
 
   const authenticate = async () => {
@@ -62,7 +65,7 @@ export const LockScreen: React.FC<LockScreenProps> = ({ onUnlock }) => {
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => StyleSheet.create({
   container: {
     position: 'absolute',
     top: 0,
@@ -90,7 +93,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   buttonText: {
-    color: '#FFF',
+    color: theme.colors.accentForeground,
     fontSize: theme.typography.sizes.regular,
     fontFamily: theme.typography.fontFamily.bold,
   },

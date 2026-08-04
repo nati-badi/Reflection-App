@@ -12,6 +12,9 @@ import {
   Inter_500Medium,
   Inter_700Bold,
 } from '@expo-google-fonts/inter';
+import { useAppTheme } from '../hooks/useAppTheme';
+import { StatusBar } from 'expo-status-bar';
+import { View } from 'react-native';
 
 export default function RootLayout() {
   const { user, setUser, setLoading, loading } = useAuthStore();
@@ -23,6 +26,8 @@ export default function RootLayout() {
     Inter_500Medium,
     Inter_700Bold,
   });
+  
+  const { theme, isDark } = useAppTheme();
   
   const router = useRouter();
   const segments = useSegments();
@@ -84,9 +89,10 @@ export default function RootLayout() {
   }
 
   return (
-    <>
+    <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
       <Slot />
       {isLocked && <LockScreen onUnlock={handleUnlock} />}
-    </>
+    </View>
   );
 }

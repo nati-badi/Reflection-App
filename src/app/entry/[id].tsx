@@ -5,7 +5,8 @@ import { getDayDocument, saveDayDocument } from '../../services/db';
 import { format, parseISO } from 'date-fns';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useTranslation } from '../../hooks/useTranslation';
-import { theme } from '../../constants/theme';
+import { Theme } from '../../constants/theme';
+import { useAppTheme } from '../../hooks/useAppTheme';
 import { Check, ArrowLeft, Bold, Italic, Heading, List, ListOrdered, Smile } from 'lucide-react-native';
 
 import { processEditorTextChange, renumberContentLists } from '../../utils/editorUtils';
@@ -19,6 +20,8 @@ export default function EntryScreen() {
   const { id } = useLocalSearchParams();
   const router = useRouter();
   const { user } = useAuthStore();
+  const { theme } = useAppTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
   const { t, formatDateDual } = useTranslation();
   
   const [content, setContent] = useState('');
@@ -34,7 +37,7 @@ export default function EntryScreen() {
   const [selection, setSelection] = useState({ start: 0, end: 0 });
   const isProgrammaticInsert = useRef(false);
 
-  const targetDateStr = typeof id === 'string' && id !== 'new' ? id : format(new Date(), 'yyyy-MM-dd');
+  const targetDateStr = typeof id === 'string' && id !== 'new' && id !== 'today' ? id : format(new Date(), 'yyyy-MM-dd');
 
   useEffect(() => {
     loadEntry();
@@ -341,7 +344,7 @@ export default function EntryScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,
@@ -459,7 +462,7 @@ const styles = StyleSheet.create({
     color: theme.colors.textSecondary,
   },
   categoryTabTextActive: {
-    color: '#FFFFFF',
+    color: theme.colors.accentForeground,
     fontFamily: theme.typography.fontFamily.bold,
   },
   quickScrollContent: {

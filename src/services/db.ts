@@ -1,13 +1,18 @@
-import { collection, doc, getDocs, query, orderBy, limit, updateDoc, setDoc, getDoc, where, startAfter } from 'firebase/firestore';
+import { collection, doc, getDocs, query, orderBy, limit, setDoc, getDoc, where, startAfter, deleteDoc, writeBatch } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import type { DayEntry, StreakMeta, WeeklySummary } from '../types';
-import { format, startOfWeek, endOfWeek, subWeeks, subDays, parseISO } from 'date-fns';
+import type { DayEntry, StreakMeta, WeeklySummary, MonthlySummary } from '../types';
+import { format, startOfWeek, endOfWeek, subWeeks, subDays, parseISO, startOfMonth, endOfMonth, subMonths, eachDayOfInterval } from 'date-fns';
+
+// --- Utility Functions ---
+export const getTodayDateString = (): string => format(new Date(), 'yyyy-MM-dd');
+export const getDocIdForDate = (userId: string, dateStr: string): string => `${userId}_${dateStr}`;
+export const getTodayDocId = (userId: string): string => getDocIdForDate(userId, getTodayDateString());
 
 // --- Day Document Services ---
 
 export const getOrCreateTodayDocument = async (userId: string): Promise<DayEntry> => {
-  const today = format(new Date(), 'yyyy-MM-dd');
-  const docId = `${userId}_${today}`;
+  const today = getTodayDateString();
+  const docId = getTodayDocId(userId);
   const docRef = doc(db, 'days', docId);
 
   try {
@@ -32,7 +37,7 @@ export const getOrCreateTodayDocument = async (userId: string): Promise<DayEntry
 };
 
 export const getDayDocument = async (userId: string, date: string): Promise<DayEntry | null> => {
-  const docId = `${userId}_${date}`;
+  const docId = getDocIdForDate(userId, date);
   const docRef = doc(db, 'days', docId);
   try {
     const docSnap = await getDoc(docRef);
@@ -51,7 +56,7 @@ export const saveDayDocument = async (
   contentMarkdown: string,
   mood: string | null
 ): Promise<DayEntry> => {
-  const docId = `${userId}_${date}`;
+  const docId = getDocIdForDate(userId, date);
   const docRef = doc(db, 'days', docId);
   const now = Date.now();
 
@@ -145,12 +150,18 @@ export const getMonthDays = async (userId: string, year: number, month: number):
   }
 };
 
-export const searchDays = async (userId: string, searchQuery: string): Promise<DayEntry[]> => {
-  if (!searchQuery.trim()) return [];
+export const searchDays = async (userId: string, searchQuery: string, startDate?: string, endDate?: string): Promise<DayEntry[]> => {
+  // If only searching by date range, allow empty query
+  if (!searchQuery.trim() && !startDate && !endDate) return [];
+
+  const conditions: any[] = [where('userId', '==', userId)];
+  
+  if (startDate) conditions.push(where('date', '>=', startDate));
+  if (endDate) conditions.push(where('date', '<=', endDate));
 
   const q = query(
     collection(db, 'days'),
-    where('userId', '==', userId),
+    ...conditions,
     orderBy('date', 'desc'),
     limit(100)
   );
@@ -403,5 +414,263 @@ export const getWeeklySummariesHistory = async (userId: string): Promise<WeeklyS
   } catch (error) {
     console.warn('getWeeklySummariesHistory failed:', error);
     return [];
+  }
+};
+
+// --- Monthly Summary Services ---
+
+export const getMonthlySummary = async (userId: string, month: string): Promise<MonthlySummary | null> => {
+  try {
+    const docRef = doc(db, 'monthlySummaries', `${userId}_${month}`);
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+      return { id: docSnap.id, ...docSnap.data() } as MonthlySummary;
+    }
+  } catch (error) {
+    console.warn('getMonthlySummary failed:', error);
+  }
+  return null;
+};
+
+export const generateAndSaveMonthlySummary = async (
+  userId: string,
+  targetDate: Date = subMonths(new Date(), 1)
+): Promise<MonthlySummary | null> => {
+  const monthStart = startOfMonth(targetDate);
+  const monthEnd = endOfMonth(targetDate);
+  const startDateStr = format(monthStart, 'yyyy-MM-dd');
+  const endDateStr = format(monthEnd, 'yyyy-MM-dd');
+  const month = format(monthStart, 'yyyy-MM');
+
+  const docId = `${userId}_${month}`;
+
+  // 1. Idempotency Check: check if summary already exists
+  const existing = await getMonthlySummary(userId, month);
+  if (existing) {
+    return existing;
+  }
+
+  // 2. Query days in this month
+  const q = query(
+    collection(db, 'days'),
+    where('userId', '==', userId),
+    where('date', '>=', startDateStr),
+    where('date', '<=', endDateStr),
+    orderBy('date', 'desc')
+  );
+
+  let monthDays: DayEntry[] = [];
+  try {
+    const querySnapshot = await getDocs(q);
+    monthDays = querySnapshot.docs
+      .map(docSnap => docSnap.data() as DayEntry)
+      .filter(d => d.contentMarkdown && d.contentMarkdown.trim().length > 0);
+  } catch (e) {
+    console.warn('Failed to query month days:', e);
+    return null;
+  }
+
+  // 3. Suppress creation if 0 days written in that month
+  if (monthDays.length === 0) {
+    return null;
+  }
+
+  // 4. Compute metrics
+  const moodBreakdown: Record<string, number> = {};
+  const writtenDatesSet = new Set<string>();
+
+  monthDays.forEach(day => {
+    writtenDatesSet.add(day.date);
+    if (day.mood) {
+      moodBreakdown[day.mood] = (moodBreakdown[day.mood] || 0) + 1;
+    }
+  });
+
+  // 5. Compute longest streak within this specific month
+  const allDaysInMonth = eachDayOfInterval({ start: monthStart, end: monthEnd });
+  let maxStreakInMonth = 0;
+  let currentRun = 0;
+
+  allDaysInMonth.forEach(d => {
+    const dateStr = format(d, 'yyyy-MM-dd');
+    if (writtenDatesSet.has(dateStr)) {
+      currentRun++;
+      if (currentRun > maxStreakInMonth) {
+        maxStreakInMonth = currentRun;
+      }
+    } else {
+      currentRun = 0;
+    }
+  });
+
+  const summaryData: MonthlySummary = {
+    userId,
+    month,
+    startDate: startDateStr,
+    endDate: endDateStr,
+    daysWrittenCount: writtenDatesSet.size,
+    moodBreakdown,
+    longestStreakInMonth: maxStreakInMonth,
+    createdAt: Date.now(),
+  };
+
+  try {
+    const docRef = doc(db, 'monthlySummaries', docId);
+    await setDoc(docRef, summaryData);
+  } catch (error) {
+    console.warn('Saving monthlySummary to Firestore failed, serving in-memory:', error);
+  }
+
+  return { id: docId, ...summaryData };
+};
+
+export const getMonthlySummariesHistory = async (userId: string): Promise<MonthlySummary[]> => {
+  try {
+    const q = query(
+      collection(db, 'monthlySummaries'),
+      where('userId', '==', userId),
+      orderBy('createdAt', 'desc'),
+      limit(20)
+    );
+
+    const querySnapshot = await getDocs(q);
+    return querySnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as MonthlySummary));
+  } catch (error) {
+    console.warn('getMonthlySummariesHistory failed:', error);
+    return [];
+  }
+};
+
+// --- One-Time Duplicate Cleanup Script ---
+
+export const cleanupDuplicateDays = async (userId: string): Promise<void> => {
+  try {
+    const metaRef = doc(db, 'meta', userId);
+    const metaSnap = await getDoc(metaRef);
+    if (metaSnap.exists() && metaSnap.data().hasCleanedDuplicateDays === true) {
+      return; // Already cleaned up
+    }
+
+    const q = query(collection(db, 'days'), where('userId', '==', userId));
+    const querySnapshot = await getDocs(q);
+    
+    if (querySnapshot.empty) {
+      await setDoc(metaRef, { hasCleanedDuplicateDays: true }, { merge: true });
+      return;
+    }
+
+    const byDate: Record<string, DayEntry[]> = {};
+    querySnapshot.forEach(docSnap => {
+      const data = { id: docSnap.id, ...docSnap.data() } as DayEntry;
+      if (!data.date) return;
+      if (!byDate[data.date]) byDate[data.date] = [];
+      byDate[data.date].push(data);
+    });
+
+    let foundDuplicates = false;
+
+    for (const date in byDate) {
+      const docs = byDate[date];
+      if (docs.length > 1) {
+        foundDuplicates = true;
+        // Sort by createdAt ASC so oldest is first
+        docs.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+        
+        const canonicalId = getDocIdForDate(userId, date);
+        let mergedContent = '';
+        let canonicalMood = null;
+        let oldestCreatedAt = docs[0].createdAt || Date.now();
+        let newestUpdatedAt = docs[0].updatedAt || Date.now();
+
+        docs.forEach(d => {
+          if (d.contentMarkdown && d.contentMarkdown.trim()) {
+            mergedContent += (mergedContent ? '\n\n' : '') + d.contentMarkdown.trim();
+          }
+          if (d.mood) canonicalMood = d.mood;
+          if (d.updatedAt && d.updatedAt > newestUpdatedAt) newestUpdatedAt = d.updatedAt;
+        });
+
+        console.log(`[Duplicate Cleanup] Merging ${docs.length} documents for date: ${date}`);
+        console.log(`[Duplicate Cleanup] Canonical ID: ${canonicalId}`);
+        console.log(`[Duplicate Cleanup] Final Merged Content:`, mergedContent);
+
+        // Write canonical doc
+        const canonicalRef = doc(db, 'days', canonicalId);
+        await setDoc(canonicalRef, {
+          userId,
+          date,
+          contentMarkdown: mergedContent,
+          mood: canonicalMood,
+          createdAt: oldestCreatedAt,
+          updatedAt: newestUpdatedAt
+        }, { merge: true });
+
+        // Delete non-canonical docs
+        for (const d of docs) {
+          if (d.id !== canonicalId) {
+            console.log(`[Duplicate Cleanup] Deleting duplicate docId: ${d.id}`);
+            await deleteDoc(doc(db, 'days', d.id));
+          }
+        }
+      }
+    }
+
+    if (!foundDuplicates) {
+      console.log('[Duplicate Cleanup] No duplicates found.');
+    }
+
+    await setDoc(metaRef, { hasCleanedDuplicateDays: true }, { merge: true });
+    
+  } catch (error) {
+    console.warn('[Duplicate Cleanup] error:', error);
+  }
+};
+
+// --- Account Deletion ---
+export const deleteUserAccount = async (userId: string, authUser: any) => {
+  // 1. Delete Days
+  let daysQuery = query(collection(db, 'days'), where('userId', '==', userId));
+  let daysSnap = await getDocs(daysQuery);
+  while (!daysSnap.empty) {
+    const batch = writeBatch(db);
+    daysSnap.docs.forEach(d => batch.delete(d.ref));
+    await batch.commit();
+    daysSnap = await getDocs(daysQuery); // Check if more remain
+  }
+
+  // 2. Delete Weekly Summaries
+  let weeklyQuery = query(collection(db, 'weeklySummaries'), where('userId', '==', userId));
+  let weeklySnap = await getDocs(weeklyQuery);
+  while (!weeklySnap.empty) {
+    const batch = writeBatch(db);
+    weeklySnap.docs.forEach(d => batch.delete(d.ref));
+    await batch.commit();
+    weeklySnap = await getDocs(weeklyQuery);
+  }
+
+  // 3. Delete Monthly Summaries
+  let monthlyQuery = query(collection(db, 'monthlySummaries'), where('userId', '==', userId));
+  let monthlySnap = await getDocs(monthlyQuery);
+  while (!monthlySnap.empty) {
+    const batch = writeBatch(db);
+    monthlySnap.docs.forEach(d => batch.delete(d.ref));
+    await batch.commit();
+    monthlySnap = await getDocs(monthlyQuery);
+  }
+
+  // 4. Delete Meta
+  let metaQuery = query(collection(db, 'meta'), where('userId', '==', userId));
+  let metaSnap = await getDocs(metaQuery);
+  while (!metaSnap.empty) {
+    const batch = writeBatch(db);
+    metaSnap.docs.forEach(d => batch.delete(d.ref));
+    await batch.commit();
+    metaSnap = await getDocs(metaQuery);
+  }
+
+  // 5. Delete Firebase Auth User
+  if (authUser) {
+    const { deleteUser } = await import('firebase/auth');
+    await deleteUser(authUser);
   }
 };

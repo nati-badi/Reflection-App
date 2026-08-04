@@ -3,16 +3,26 @@ import { View, Text, StyleSheet, TouchableOpacity, FlatList, ActivityIndicator, 
 import { useRouter } from 'expo-router';
 import { useAuthStore } from '../store/useAuthStore';
 import { useTranslation } from '../hooks/useTranslation';
-import { getPastDays, getMonthDays, getWeeklySummariesHistory, generateAndSaveWeeklySummary } from '../services/db';
-import type { DayEntry, WeeklySummary } from '../types';
-import { theme } from '../constants/theme';
+import {
+  getPastDays,
+  getMonthDays,
+  getWeeklySummariesHistory,
+  generateAndSaveWeeklySummary,
+  getMonthlySummariesHistory,
+  generateAndSaveMonthlySummary
+} from '../services/db';
+import type { DayEntry, WeeklySummary, MonthlySummary } from '../types';
+import { Theme } from '../constants/theme';
+import { useAppTheme } from '../hooks/useAppTheme';
 import { ArrowLeft, Calendar as CalendarIcon, List as ListIcon, Trophy, ChevronLeft, ChevronRight } from 'lucide-react-native';
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, isSameMonth, subWeeks, parseISO } from 'date-fns';
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, isSameMonth, subWeeks, subMonths, parseISO } from 'date-fns';
 import { WeeklySummaryModal } from '../components/WeeklySummaryModal';
-
+import { CalendarGrid } from '../components/CalendarGrid';
 export default function HistoryScreen() {
   const router = useRouter();
   const { user } = useAuthStore();
+  const { theme } = useAppTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
   const { t, formatDateDual } = useTranslation();
 
   const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list');
@@ -30,9 +40,10 @@ export default function HistoryScreen() {
   const [monthLoading, setMonthLoading] = useState(false);
   const [selectedCalendarDate, setSelectedCalendarDate] = useState<Date | null>(new Date());
 
-  // Weekly Summary Modal State
-  const [selectedSummary, setSelectedSummary] = useState<WeeklySummary | null>(null);
+  // Summary Modal State
+  const [selectedSummary, setSelectedSummary] = useState<WeeklySummary | MonthlySummary | null>(null);
   const [summaryModalVisible, setSummaryModalVisible] = useState(false);
+  const [summaryType, setSummaryType] = useState<'weekly' | 'monthly'>('weekly');
 
   // Load initial past days for list view
   const loadInitialPastDays = useCallback(async () => {
@@ -95,23 +106,34 @@ export default function HistoryScreen() {
     }
   }, [viewMode, currentMonthDate, loadMonthDaysData]);
 
-  // Load weekly summaries history
-  const handleOpenSummaries = async () => {
+  // Load weekly or monthly summaries history
+  const handleOpenSummaries = async (type: 'weekly' | 'monthly' = 'weekly') => {
     if (!user) return;
     try {
-      let summaries = await getWeeklySummariesHistory(user.uid);
-      if (summaries.length === 0) {
-        const lastWeekSummary = await generateAndSaveWeeklySummary(user.uid, subWeeks(new Date(), 1));
-        if (lastWeekSummary) {
-          summaries = [lastWeekSummary];
+      setSummaryType(type);
+      if (type === 'weekly') {
+        let summaries = await getWeeklySummariesHistory(user.uid);
+        if (summaries.length === 0) {
+          const lastWeekSummary = await generateAndSaveWeeklySummary(user.uid, subWeeks(new Date(), 1));
+          if (lastWeekSummary) summaries = [lastWeekSummary];
+        }
+        if (summaries.length > 0) {
+          setSelectedSummary(summaries[0]);
+          setSummaryModalVisible(true);
+        }
+      } else {
+        let monthSummaries = await getMonthlySummariesHistory(user.uid);
+        if (monthSummaries.length === 0) {
+          const lastMonthSummary = await generateAndSaveMonthlySummary(user.uid, subMonths(new Date(), 1));
+          if (lastMonthSummary) monthSummaries = [lastMonthSummary];
+        }
+        if (monthSummaries.length > 0) {
+          setSelectedSummary(monthSummaries[0]);
+          setSummaryModalVisible(true);
         }
       }
-      if (summaries.length > 0) {
-        setSelectedSummary(summaries[0]);
-        setSummaryModalVisible(true);
-      }
     } catch (e) {
-      console.error('Failed to load weekly summaries:', e);
+      console.error('Failed to load summaries:', e);
     }
   };
 
@@ -145,19 +167,11 @@ export default function HistoryScreen() {
     );
   };
 
-  // Calendar Helpers
-  const monthStart = startOfMonth(currentMonthDate);
-  const monthEnd = endOfMonth(currentMonthDate);
-  const daysInMonth = eachDayOfInterval({ start: monthStart, end: monthEnd });
-  const startDayOfWeek = (monthStart.getDay() + 6) % 7; // Monday = 0
+  const selectedDayDoc = selectedCalendarDate
+    ? monthDays.find(d => d.date === format(selectedCalendarDate, 'yyyy-MM-dd')) || null
+    : null;
 
-  const getDayForSelectedDate = () => {
-    if (!selectedCalendarDate) return null;
-    const selectedDateStr = format(selectedCalendarDate, 'yyyy-MM-dd');
-    return monthDays.find(d => d.date === selectedDateStr) || null;
-  };
-
-  const selectedDayDoc = getDayForSelectedDate();
+  const daysWithEntries = monthDays.map(d => d.date);
 
   return (
     <View style={styles.container}>
@@ -169,8 +183,11 @@ export default function HistoryScreen() {
         <Text style={styles.headerTitle}>{t('history')}</Text>
 
         <View style={styles.headerActions}>
-          <TouchableOpacity onPress={handleOpenSummaries} style={styles.iconButton}>
+          <TouchableOpacity onPress={() => handleOpenSummaries('weekly')} style={styles.iconButton}>
             <Trophy size={22} color={theme.colors.textPrimary} />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => handleOpenSummaries('monthly')} style={styles.iconButton}>
+            <CalendarIcon size={22} color={theme.colors.textPrimary} />
           </TouchableOpacity>
         </View>
       </View>
@@ -233,75 +250,15 @@ export default function HistoryScreen() {
       ) : (
         /* Calendar Mode View */
         <ScrollView style={styles.calendarScroll}>
-          <View style={styles.calendarContainer}>
-            {/* Month Header Navigation */}
-            <View style={styles.monthHeader}>
-              <TouchableOpacity
-                onPress={() => setCurrentMonthDate(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1))}
-                style={styles.iconButton}
-              >
-                <ChevronLeft size={24} color={theme.colors.textPrimary} />
-              </TouchableOpacity>
-              <Text style={styles.monthTitle}>
-                {format(currentMonthDate, 'MMMM yyyy')}
-              </Text>
-              <TouchableOpacity
-                onPress={() => setCurrentMonthDate(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1))}
-                style={styles.iconButton}
-              >
-                <ChevronRight size={24} color={theme.colors.textPrimary} />
-              </TouchableOpacity>
-            </View>
-
-            {/* Weekday Headers */}
-            <View style={styles.weekdayRow}>
-              {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((dayName, index) => (
-                <Text key={index} style={styles.weekdayText}>{dayName}</Text>
-              ))}
-            </View>
-
-            {/* Days Grid */}
-            {monthLoading ? (
-              <View style={styles.calendarLoaderContainer}>
-                <ActivityIndicator color={theme.colors.accent} />
-              </View>
-            ) : (
-              <View style={styles.daysGrid}>
-                {/* Empty cells before start of month */}
-                {Array.from({ length: startDayOfWeek }).map((_, index) => (
-                  <View key={`empty-${index}`} style={styles.dayCellEmpty} />
-                ))}
-
-                {/* Days of month */}
-                {daysInMonth.map((dayDate) => {
-                  const dateStr = format(dayDate, 'yyyy-MM-dd');
-                  const hasEntry = monthDays.some(d => d.date === dateStr);
-                  const isSelected = selectedCalendarDate && isSameDay(dayDate, selectedCalendarDate);
-
-                  return (
-                    <TouchableOpacity
-                      key={dateStr}
-                      style={[
-                        styles.dayCell,
-                        hasEntry && styles.dayCellWithEntry,
-                        isSelected && styles.dayCellSelected
-                      ]}
-                      onPress={() => setSelectedCalendarDate(dayDate)}
-                    >
-                      <Text style={[
-                        styles.dayCellText,
-                        hasEntry && styles.dayCellTextWithEntry,
-                        isSelected && styles.dayCellTextSelected
-                      ]}>
-                        {format(dayDate, 'd')}
-                      </Text>
-                      {hasEntry && <View style={styles.entryDot} />}
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            )}
-          </View>
+          <CalendarGrid 
+            currentMonthDate={currentMonthDate}
+            onMonthChange={setCurrentMonthDate}
+            isLoading={monthLoading}
+            daysWithEntries={daysWithEntries}
+            selectionMode="single"
+            selectedDate={selectedCalendarDate}
+            onDateSelect={setSelectedCalendarDate}
+          />
 
           {/* Selected Date Entries Container */}
           {selectedCalendarDate && (
@@ -331,7 +288,7 @@ export default function HistoryScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,
@@ -391,7 +348,7 @@ const styles = StyleSheet.create({
     color: theme.colors.textSecondary,
   },
   toggleTextActive: {
-    color: '#FFFFFF',
+    color: theme.colors.accentForeground,
     fontFamily: theme.typography.fontFamily.bold,
   },
   centerContainer: {
@@ -444,74 +401,6 @@ const styles = StyleSheet.create({
   },
   calendarScroll: {
     flex: 1,
-  },
-  calendarContainer: {
-    backgroundColor: theme.colors.surface,
-    margin: theme.spacing.md,
-    borderRadius: 12,
-    padding: theme.spacing.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  monthHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: theme.spacing.md,
-  },
-  monthTitle: {
-    fontSize: theme.typography.sizes.regular,
-    fontFamily: theme.typography.fontFamily.bold,
-    color: theme.colors.textPrimary,
-  },
-  weekdayRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    marginBottom: theme.spacing.xs,
-  },
-  weekdayText: {
-    width: 40,
-    textAlign: 'center',
-    fontSize: theme.typography.sizes.small,
-    color: theme.colors.textSecondary,
-    fontFamily: theme.typography.fontFamily.medium,
-  },
-  calendarLoaderContainer: {
-    padding: theme.spacing.xl,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  daysGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-  },
-  dayCellEmpty: {
-    width: '14.28%',
-    height: 44,
-  },
-  dayCell: {
-    width: '14.28%',
-    height: 44,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: 8,
-  },
-  dayCellWithEntry: {
-    backgroundColor: theme.colors.background,
-  },
-  dayCellSelected: {
-    backgroundColor: theme.colors.accent,
-  },
-  dayCellText: {
-    fontSize: theme.typography.sizes.regular,
-    color: theme.colors.textPrimary,
-  },
-  dayCellTextWithEntry: {
-    fontFamily: theme.typography.fontFamily.bold,
-  },
-  dayCellTextSelected: {
-    color: '#FFFFFF',
-    fontFamily: theme.typography.fontFamily.bold,
   },
   entryDot: {
     width: 4,

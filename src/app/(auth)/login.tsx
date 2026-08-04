@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../../config/firebase';
-import { theme } from '../../constants/theme';
+import { Theme } from '../../constants/theme';
+import { useAppTheme } from '../../hooks/useAppTheme';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -10,6 +11,8 @@ export default function LoginScreen() {
   const [isLogin, setIsLogin] = useState(true);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const { theme } = useAppTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
 
   const handleAuth = async () => {
     if (!email || !password) {
@@ -87,7 +90,7 @@ export default function LoginScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,
@@ -127,7 +130,7 @@ const styles = StyleSheet.create({
     marginTop: theme.spacing.sm,
   },
   buttonText: {
-    color: '#FFF',
+    color: theme.colors.accentForeground,
     fontSize: theme.typography.sizes.regular,
     fontFamily: theme.typography.fontFamily.bold,
   },
