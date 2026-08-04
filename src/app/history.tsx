@@ -14,6 +14,7 @@ import {
 import type { DayEntry, WeeklySummary, MonthlySummary } from '../types';
 import { Theme } from '../constants/theme';
 import { useAppTheme } from '../hooks/useAppTheme';
+import { FormattedPreviewText } from '../components/FormattedPreviewText';
 import { ArrowLeft, Calendar as CalendarIcon, List as ListIcon, Trophy, ChevronLeft, ChevronRight } from 'lucide-react-native';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, isSameMonth, subWeeks, subMonths, parseISO } from 'date-fns';
 import { WeeklySummaryModal } from '../components/WeeklySummaryModal';
@@ -160,9 +161,7 @@ export default function HistoryScreen() {
           </Text>
           {item.mood && <Text style={styles.moodText}>{item.mood}</Text>}
         </View>
-        <Text style={styles.entryPreview} numberOfLines={3}>
-          {item.contentMarkdown ? item.contentMarkdown.replace(/[*#]/g, '') : ''}
-        </Text>
+        <FormattedPreviewText markdown={item.contentMarkdown || ''} style={styles.entryPreview} numberOfLines={3} />
       </TouchableOpacity>
     );
   };

@@ -14,7 +14,7 @@ import {
 } from '@expo-google-fonts/inter';
 import { useAppTheme } from '../hooks/useAppTheme';
 import { StatusBar } from 'expo-status-bar';
-import { View } from 'react-native';
+import { View, Platform } from 'react-native';
 
 export default function RootLayout() {
   const { user, setUser, setLoading, loading } = useAuthStore();
@@ -90,6 +90,18 @@ export default function RootLayout() {
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
+      {Platform.OS === 'web' && (
+        <style>{`
+          input:focus, textarea:focus, [contenteditable]:focus {
+            outline: none !important;
+            box-shadow: none !important;
+            border-color: ${theme.colors.accent}80 !important;
+          }
+          *:focus {
+            outline: none !important;
+          }
+        `}</style>
+      )}
       <StatusBar style={isDark ? 'light' : 'dark'} />
       <Slot />
       {isLocked && <LockScreen onUnlock={handleUnlock} />}

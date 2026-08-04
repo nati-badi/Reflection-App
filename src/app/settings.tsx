@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Switch, Alert, Platform, Modal, ScrollView, ActivityIndicator, TextInput } from 'react-native';
 import { useRouter } from 'expo-router';
-import { signOut } from 'firebase/auth';
+import { signOut, sendEmailVerification } from 'firebase/auth';
 import { auth } from '../config/firebase';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useAuthStore } from '../store/useAuthStore';
@@ -29,6 +29,28 @@ export default function SettingsScreen() {
   const [isDeleteModalVisible, setDeleteModalVisible] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
+  const [resendingEmail, setResendingEmail] = useState(false);
+  const [verificationSentMsg, setVerificationSentMsg] = useState('');
+
+  useEffect(() => {
+    if (auth.currentUser) {
+      auth.currentUser.reload().catch(() => {});
+    }
+  }, []);
+
+  const handleResendVerification = async () => {
+    if (!auth.currentUser) return;
+    setResendingEmail(true);
+    setVerificationSentMsg('');
+    try {
+      await sendEmailVerification(auth.currentUser);
+      setVerificationSentMsg('Verification email sent! Please check your inbox.');
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed to send verification email.');
+    } finally {
+      setResendingEmail(false);
+    }
+  };
 
   const handleExport = async () => {
     if (!user) return;
@@ -213,6 +235,34 @@ export default function SettingsScreen() {
       </View>
 
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 40 }}>
+      {/* Email Verification Banner */}
+      {auth.currentUser && !auth.currentUser.emailVerified && (
+        <View style={styles.verificationCard}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: theme.spacing.xs }}>
+            <AlertTriangle size={18} color={theme.colors.accent} style={{ marginRight: 8 }} />
+            <Text style={styles.verificationTitle}>Email Not Verified</Text>
+          </View>
+          <Text style={styles.verificationText}>
+            Verify your email to ensure password reset reliability and account recovery.
+          </Text>
+          {verificationSentMsg ? (
+            <Text style={styles.verificationSuccessText}>{verificationSentMsg}</Text>
+          ) : (
+            <TouchableOpacity
+              style={styles.resendButton}
+              onPress={handleResendVerification}
+              disabled={resendingEmail}
+            >
+              {resendingEmail ? (
+                <ActivityIndicator color={theme.colors.accent} size="small" />
+              ) : (
+                <Text style={styles.resendButtonText}>Resend verification email</Text>
+              )}
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
+
       {/* Appearance & Language Section */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Appearance</Text>
@@ -510,6 +560,60 @@ const createStyles = (theme: Theme) => StyleSheet.create({
     minHeight: 44,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  deleteModalCancelBtnText: {
+    color: theme.colors.textPrimary,
+    fontFamily: theme.typography.fontFamily.medium,
+  },
+  deleteModalConfirmBtn: {
+    flex: 1,
+    paddingVertical: theme.spacing.md,
+    borderRadius: 8,
+    backgroundColor: '#EF4444',
+    alignItems: 'center',
+  },
+  deleteModalConfirmBtnText: {
+    color: '#FFFFFF',
+    fontFamily: theme.typography.fontFamily.bold,
+  },
+  verificationCard: {
+    backgroundColor: theme.colors.surface,
+    borderColor: theme.colors.accent + '40',
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: theme.spacing.md,
+    marginHorizontal: theme.spacing.xl,
+    marginTop: theme.spacing.md,
+    marginBottom: theme.spacing.sm,
+  },
+  verificationTitle: {
+    fontSize: theme.typography.sizes.regular,
+    fontFamily: theme.typography.fontFamily.bold,
+    color: theme.colors.textPrimary,
+  },
+  verificationText: {
+    fontSize: theme.typography.sizes.small,
+    fontFamily: theme.typography.fontFamily.regular,
+    color: theme.colors.textSecondary,
+    marginBottom: theme.spacing.sm,
+  },
+  verificationSuccessText: {
+    fontSize: theme.typography.sizes.small,
+    fontFamily: theme.typography.fontFamily.medium,
+    color: '#10B981',
+    marginTop: theme.spacing.xs,
+  },
+  resendButton: {
+    alignSelf: 'flex-start',
+    paddingVertical: theme.spacing.xs,
+    paddingHorizontal: theme.spacing.sm,
+    borderRadius: 6,
+    backgroundColor: theme.colors.accent + '15',
+  },
+  resendButtonText: {
+    fontSize: theme.typography.sizes.small,
+    fontFamily: theme.typography.fontFamily.medium,
+    color: theme.colors.accent,
   },
   headerTitle: {
     fontSize: theme.typography.sizes.h3,

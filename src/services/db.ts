@@ -60,27 +60,32 @@ export const saveDayDocument = async (
   const docRef = doc(db, 'days', docId);
   const now = Date.now();
 
-  let createdAt = now;
+  let createdAt = undefined;
   try {
     const existingSnap = await getDoc(docRef);
-    if (existingSnap.exists()) {
-      createdAt = existingSnap.data().createdAt || now;
+    if (!existingSnap.exists()) {
+      createdAt = now;
     }
   } catch (e) {
-    // ignore read error before write
+    // assume new if read fails
+    createdAt = now;
   }
 
-  const dayData: DayEntry = {
-    id: docId,
+  const dayData: Partial<DayEntry> = {
     userId,
     date,
     contentMarkdown,
     mood,
-    createdAt,
     updatedAt: now,
   };
+  
+  // Only include createdAt if it's a completely new document
+  if (createdAt !== undefined) {
+    dayData.createdAt = createdAt;
+  }
 
   try {
+    // merge: true ensures we don't overwrite createdAt if it exists natively
     await setDoc(docRef, dayData, { merge: true });
   } catch (error) {
     console.warn('saveDayDocument Firestore write failed (check security rules), serving in-memory:', error);
@@ -91,7 +96,7 @@ export const saveDayDocument = async (
     await checkAndUpdateStreak(userId, date);
   }
 
-  return dayData;
+  return { id: docId, ...dayData } as DayEntry;
 };
 
 export const getPastDays = async (userId: string, lastDocId?: string, limitCount = 20): Promise<DayEntry[]> => {
@@ -150,28 +155,53 @@ export const getMonthDays = async (userId: string, year: number, month: number):
   }
 };
 
-export const searchDays = async (userId: string, searchQuery: string, startDate?: string, endDate?: string): Promise<DayEntry[]> => {
-  // If only searching by date range, allow empty query
-  if (!searchQuery.trim() && !startDate && !endDate) return [];
+export const searchDays = async (
+  userId: string, 
+  searchQuery: string, 
+  startDate?: string, 
+  endDate?: string, 
+  mood?: string
+): Promise<DayEntry[]> => {
+  const trimmedQuery = searchQuery.trim();
+  // If searching by keyword, date range, or mood, allow empty search query
+  if (!trimmedQuery && !startDate && !endDate && !mood) return [];
 
-  const conditions: any[] = [where('userId', '==', userId)];
-  
-  if (startDate) conditions.push(where('date', '>=', startDate));
-  if (endDate) conditions.push(where('date', '<=', endDate));
-
+  // Use simple userId + date ordering query (no composite index required)
   const q = query(
     collection(db, 'days'),
-    ...conditions,
+    where('userId', '==', userId),
     orderBy('date', 'desc'),
-    limit(100)
+    limit(200)
   );
 
   try {
     const querySnapshot = await getDocs(q);
-    const term = searchQuery.toLowerCase();
-    return querySnapshot.docs
-      .map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as DayEntry))
-      .filter(day => day.contentMarkdown && day.contentMarkdown.toLowerCase().includes(term));
+    let results = querySnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as DayEntry));
+
+    // Filter by date range
+    if (startDate) {
+      results = results.filter(day => day.date >= startDate);
+    }
+    if (endDate) {
+      results = results.filter(day => day.date <= endDate);
+    }
+
+    // Filter by selected mood button
+    if (mood) {
+      results = results.filter(day => day.mood === mood);
+    }
+
+    // Filter by text search query (matches content markdown or mood emoji)
+    if (trimmedQuery) {
+      const term = trimmedQuery.toLowerCase();
+      results = results.filter(day => {
+        const matchesContent = day.contentMarkdown && day.contentMarkdown.toLowerCase().includes(term);
+        const matchesMood = day.mood && day.mood.includes(trimmedQuery);
+        return matchesContent || matchesMood;
+      });
+    }
+
+    return results;
   } catch (error) {
     console.warn('searchDays error:', error);
     return [];
@@ -284,6 +314,99 @@ export const migrateEntriesToDays = async (userId: string): Promise<void> => {
     console.log(`Successfully migrated ${Object.keys(groupedByDate).length} days for user ${userId}`);
   } catch (error) {
     console.warn('Migration entriesToDays failed:', error);
+  }
+};
+
+// --- One-Time Timestamp Repair Script ---
+export const repairTimestamps = async (userId: string): Promise<void> => {
+  try {
+    const metaRef = doc(db, 'meta', userId);
+    const metaSnap = await getDoc(metaRef);
+    if (metaSnap.exists() && metaSnap.data().hasRepairedTimestamps === true) {
+      return; // Already repaired
+    }
+
+    console.log(`[Repair Timestamps] Starting repair for user: ${userId}`);
+    
+    const daysQuery = query(collection(db, 'days'), where('userId', '==', userId));
+    const daysSnap = await getDocs(daysQuery);
+    if (daysSnap.empty) {
+      console.log('[Repair Timestamps] No days found. Exiting.');
+      await setDoc(metaRef, { hasRepairedTimestamps: true }, { merge: true });
+      return;
+    }
+    
+    const entriesQuery = query(collection(db, 'entries'), where('userId', '==', userId));
+    const entriesSnap = await getDocs(entriesQuery);
+    
+    if (entriesSnap.empty) {
+      console.log('[Repair Timestamps] No original entries found to restore from. Exiting.');
+      await setDoc(metaRef, { hasRepairedTimestamps: true }, { merge: true });
+      return;
+    }
+    
+    // Group entries by date
+    const entriesByDate: Record<string, any[]> = {};
+    entriesSnap.forEach(docSnap => {
+      const data = docSnap.data();
+      if (!data.createdAt) return;
+      
+      let ms = 0;
+      if (typeof data.createdAt === 'number') {
+        ms = data.createdAt;
+      } else if (data.createdAt.toMillis) {
+        ms = data.createdAt.toMillis();
+      } else if (data.createdAt.seconds) {
+        ms = data.createdAt.seconds * 1000;
+      }
+      
+      if (ms > 0) {
+        const dateStr = format(new Date(ms), 'yyyy-MM-dd');
+        if (!entriesByDate[dateStr]) entriesByDate[dateStr] = [];
+        entriesByDate[dateStr].push({ ...data, _ts: ms });
+      }
+    });
+    
+    let repairedCount = 0;
+    
+    for (const dayDoc of daysSnap.docs) {
+      const dayData = dayDoc.data() as DayEntry;
+      const dateStr = dayData.date;
+      
+      const relatedEntries = entriesByDate[dateStr];
+      if (relatedEntries && relatedEntries.length > 0) {
+        relatedEntries.sort((a, b) => a._ts - b._ts);
+        const earliest = relatedEntries[0]._ts;
+        const latest = relatedEntries[relatedEntries.length - 1]._ts;
+        
+        const updateData: any = {};
+        let needsUpdate = false;
+        
+        if (dayData.createdAt !== earliest) {
+          updateData.createdAt = earliest;
+          needsUpdate = true;
+        }
+        
+        if (dayData.updatedAt !== latest) {
+          updateData.updatedAt = latest;
+          needsUpdate = true;
+        }
+        
+        if (needsUpdate) {
+          console.log(`[Repair Timestamps] Fixing ${dateStr}:`);
+          console.log(`  createdAt: ${new Date(dayData.createdAt || 0).toLocaleString()} -> ${new Date(earliest).toLocaleString()}`);
+          console.log(`  updatedAt: ${new Date(dayData.updatedAt || 0).toLocaleString()} -> ${new Date(latest).toLocaleString()}`);
+          
+          await setDoc(doc(db, 'days', dayDoc.id), updateData, { merge: true });
+          repairedCount++;
+        }
+      }
+    }
+    
+    await setDoc(metaRef, { hasRepairedTimestamps: true }, { merge: true });
+    console.log(`[Repair Timestamps] Complete! Fixed ${repairedCount} day documents for user ${userId}`);
+  } catch (error) {
+    console.warn('repairTimestamps failed:', error);
   }
 };
 

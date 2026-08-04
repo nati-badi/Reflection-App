@@ -5,6 +5,7 @@ import { ArrowLeft, Search as SearchIcon, Calendar as CalendarIcon, List as List
 import { searchDays, getMonthDays } from '../services/db';
 import { useAuthStore } from '../store/useAuthStore';
 import { useTranslation } from '../hooks/useTranslation';
+import { FormattedPreviewText } from '../components/FormattedPreviewText';
 import { Theme } from '../constants/theme';
 import { useAppTheme } from '../hooks/useAppTheme';
 import type { DayEntry } from '../types';
@@ -20,8 +21,11 @@ export default function SearchScreen() {
   
   const [viewMode, setViewMode] = useState<'keyword' | 'calendar'>('keyword');
   
+  const MOODS = ['😁', '😊', '😐', '😔', '😠'];
+
   // Keyword search state
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedMood, setSelectedMood] = useState<string | null>(null);
   const [searchResults, setSearchResults] = useState<DayEntry[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -41,7 +45,7 @@ export default function SearchScreen() {
   useEffect(() => {
     const performSearch = async () => {
       const hasRange = rangeStart && rangeEnd;
-      if (!user || (!searchQuery.trim() && !hasRange)) {
+      if (!user || (!searchQuery.trim() && !hasRange && !selectedMood)) {
         setSearchResults([]);
         return;
       }
@@ -49,7 +53,7 @@ export default function SearchScreen() {
         setLoading(true);
         const startStr = rangeStart ? format(rangeStart, 'yyyy-MM-dd') : undefined;
         const endStr = rangeEnd ? format(rangeEnd, 'yyyy-MM-dd') : undefined;
-        const data = await searchDays(user.uid, searchQuery, startStr, endStr);
+        const data = await searchDays(user.uid, searchQuery, startStr, endStr, selectedMood || undefined);
         setSearchResults(data);
       } catch (error) {
         console.error('Failed to search days:', error);
@@ -63,7 +67,7 @@ export default function SearchScreen() {
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [searchQuery, user, rangeStart, rangeEnd]);
+  }, [searchQuery, user, rangeStart, rangeEnd, selectedMood]);
 
   useEffect(() => {
     const loadMonthData = async () => {
@@ -149,9 +153,7 @@ export default function SearchScreen() {
           </Text>
           {item.mood && <Text style={styles.moodText}>{item.mood}</Text>}
         </View>
-        <Text style={styles.entryPreview} numberOfLines={2}>
-          {item.contentMarkdown ? item.contentMarkdown.replace(/[*_~`#>+-]/g, '').trim() : ''}
-        </Text>
+        <FormattedPreviewText markdown={item.contentMarkdown || ''} style={styles.entryPreview} numberOfLines={2} />
       </TouchableOpacity>
     );
   };
@@ -212,6 +214,20 @@ export default function SearchScreen() {
                 autoFocus
               />
             </View>
+            <View style={styles.moodFilterRow}>
+              {MOODS.map(m => (
+                <TouchableOpacity
+                  key={m}
+                  onPress={() => setSelectedMood(selectedMood === m ? null : m)}
+                  style={[
+                    styles.moodFilterItem,
+                    selectedMood === m && styles.moodFilterItemSelected
+                  ]}
+                >
+                  <Text style={styles.moodFilterEmoji}>{m}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
           </View>
           <FlatList
             data={searchResults}
@@ -220,7 +236,7 @@ export default function SearchScreen() {
             contentContainerStyle={styles.listContent}
             removeClippedSubviews={Platform.OS === 'android'}
             ListEmptyComponent={
-              searchQuery.trim() ? (
+              (searchQuery.trim() || selectedMood) ? (
                 <View style={styles.emptyContainer}>
                   <Text style={styles.emptyText}>{t('noSearchResults')}</Text>
                 </View>
@@ -268,7 +284,7 @@ export default function SearchScreen() {
               {rangeStart && rangeEnd && (
                 <View style={styles.rangeInfoRow}>
                   <Text style={styles.rangeInfoText}>
-                    {format(rangeStart, 'MMM d')} - {format(rangeEnd, 'MMM d')}
+                    {formatDateDual(rangeStart).primaryDate} – {formatDateDual(rangeEnd).primaryDate}
                   </Text>
                   <TouchableOpacity onPress={clearRange} style={styles.clearRangeBtn}>
                     <Text style={styles.clearRangeText}>Clear Range</Text>
@@ -403,7 +419,7 @@ const createStyles = (theme: Theme) => StyleSheet.create({
     borderColor: theme.colors.border,
   },
   subToggleBtnActive: {
-    borderColor: theme.colors.accent,
+    borderColor: theme.colors.accent + '40',
     backgroundColor: theme.colors.accent + '15',
   },
   subToggleText: {
@@ -478,5 +494,28 @@ const createStyles = (theme: Theme) => StyleSheet.create({
     fontSize: theme.typography.sizes.regular,
     color: theme.colors.textSecondary,
     fontFamily: theme.typography.fontFamily.regular,
+  },
+  moodFilterRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginTop: theme.spacing.sm,
+    paddingTop: theme.spacing.xs,
+  },
+  moodFilterItem: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  moodFilterItemSelected: {
+    borderColor: theme.colors.accent + '80',
+    backgroundColor: theme.colors.accent + '20',
+  },
+  moodFilterEmoji: {
+    fontSize: 22,
   },
 });

@@ -5,6 +5,10 @@ import { useAppTheme } from '../hooks/useAppTheme';
 import { ChevronLeft, ChevronRight } from 'lucide-react-native';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, isWithinInterval } from 'date-fns';
 
+import { useTranslation } from '../hooks/useTranslation';
+import { EthDateTime } from 'ethiopian-calendar-date-converter';
+import { ETHIOPIAN_MONTHS_AM, ETHIOPIAN_MONTHS_EN } from '../constants/translations';
+
 export interface CalendarGridProps {
   currentMonthDate: Date;
   onMonthChange: (date: Date) => void;
@@ -29,11 +33,21 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
 }) => {
   const { theme, isDark } = useAppTheme();
   const styles = React.useMemo(() => createStyles(theme), [theme]);
+  const { language } = useTranslation();
 
   const monthStart = startOfMonth(currentMonthDate);
   const monthEnd = endOfMonth(currentMonthDate);
   const daysInMonth = eachDayOfInterval({ start: monthStart, end: monthEnd });
   const startDayOfWeek = (monthStart.getDay() + 6) % 7; // Monday = 0
+
+  const ethDate = EthDateTime.fromEuropeanDate(currentMonthDate);
+  const monthTitle = language === 'am'
+    ? `${ETHIOPIAN_MONTHS_AM[ethDate.month - 1]} ${ethDate.year} ዓ.ም`
+    : `${format(currentMonthDate, 'MMMM yyyy')} (${ETHIOPIAN_MONTHS_EN[ethDate.month - 1]} ${ethDate.year})`;
+
+  const weekDayNames = language === 'am'
+    ? ['ሰኞ', 'ማክሰ', 'ረቡዕ', 'ሐሙስ', 'አርብ', 'ቅዳሜ', 'እሑድ']
+    : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
   return (
     <View style={styles.calendarContainer}>
@@ -46,7 +60,7 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
           <ChevronLeft size={24} color={theme.colors.textPrimary} />
         </TouchableOpacity>
         <Text style={styles.monthTitle}>
-          {format(currentMonthDate, 'MMMM yyyy')}
+          {monthTitle}
         </Text>
         <TouchableOpacity
           onPress={() => onMonthChange(new Date(currentMonthDate.getFullYear(), currentMonthDate.getMonth() + 1, 1))}
@@ -58,7 +72,7 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
 
       {/* Weekday Headers */}
       <View style={styles.weekdayRow}>
-        {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((dayName, index) => (
+        {weekDayNames.map((dayName, index) => (
           <Text key={index} style={styles.weekdayText}>{dayName}</Text>
         ))}
       </View>

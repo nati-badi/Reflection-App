@@ -22,6 +22,7 @@ import {
 import { Theme } from '../constants/theme';
 import { useAppTheme } from '../hooks/useAppTheme';
 import { useTranslation } from '../hooks/useTranslation';
+import { FormattedPreviewText } from '../components/FormattedPreviewText';
 import {
   getPastDays,
   getStreak,
@@ -29,6 +30,7 @@ import {
   getMonthlySummariesHistory,
   migrateEntriesToDays,
   cleanupDuplicateDays,
+  repairTimestamps,
   getTodayDateString
 } from '../services/db';
 import { useAuthStore } from '../store/useAuthStore';
@@ -135,6 +137,7 @@ export default function TimelineFeedScreen() {
       setLoading(true);
       await migrateEntriesToDays(user.uid);
       await cleanupDuplicateDays(user.uid);
+      await repairTimestamps(user.uid);
 
       const [streakData, initialPastDays, initialWeeklies, initialMonthlies] = await Promise.all([
         getStreak(user.uid),
@@ -265,36 +268,8 @@ export default function TimelineFeedScreen() {
     const isToday = item.type === 'today';
     const hasContent = day.contentMarkdown && day.contentMarkdown.trim().length > 0;
     
-    // Parse first line for preview
-    let previewText = '';
-    if (hasContent) {
-      const firstLine = day.contentMarkdown.split('\n').find(line => line.trim().length > 0);
-      if (firstLine) {
-        // Strip markdown: 
-        // 1. Remove list markers (- , * , 1. ) at start of lines
-        // 2. Remove formatting like **bold**, *italic*, __bold__, _italic_, ~~strike~~, `code`, [link](url), and > blockquotes
-        previewText = firstLine
-          .replace(/^(\s*(-|\*|\d+\.)\s+)/gm, '') 
-          .replace(/^(#+\s+)/gm, '')
-          .replace(/\*\*(.*?)\*\*/g, '$1')
-          .replace(/\*(.*?)\*/g, '$1')
-          .replace(/__(.*?)__/g, '$1')
-          .replace(/_(.*?)_/g, '$1')
-          .replace(/~~(.*?)~~/g, '$1')
-          .replace(/`(.*?)`/g, '$1')
-          .replace(/\[(.*?)\]\(.*?\)/g, '$1')
-          .replace(/^>\s+/gm, '')
-          .trim()
-          .substring(0, 60);
-          
-        if (firstLine.length > 60) previewText += '...';
-      }
-    }
-
     const d = parseISO(day.date);
-    const { compactHeader } = formatDateDual(d);
-    // Split the compact header to just show a short date
-    const shortDate = format(d, 'MMM d, yyyy');
+    const { primaryDate } = formatDateDual(d);
 
     return (
       <TouchableOpacity 
@@ -304,14 +279,12 @@ export default function TimelineFeedScreen() {
       >
         <View style={styles.leftCol}>
           {isToday ? (
-            <View style={styles.todayNodeRing}>
-              <View style={styles.todayNode}>
-                {day.mood ? (
-                  <Text style={styles.nodeEmoji}>{day.mood}</Text>
-                ) : (
-                  <Plus size={16} color={theme.colors.accent} />
-                )}
-              </View>
+            <View style={[styles.todayNode, !day.mood && styles.pastNodeEmpty]}>
+              {day.mood ? (
+                <Text style={styles.nodeEmoji}>{day.mood}</Text>
+              ) : (
+                <Plus size={22} color={theme.colors.accent} />
+              )}
             </View>
           ) : (
             <View style={[styles.pastNode, !day.mood && styles.pastNodeEmpty]}>
@@ -328,10 +301,10 @@ export default function TimelineFeedScreen() {
         </View>
         <View style={styles.rightCol}>
           <Text style={[styles.dayDateText, isToday && styles.todayDateText]}>
-            {isToday ? t('today') : shortDate}
+            {isToday ? t('today') : primaryDate}
           </Text>
           {hasContent ? (
-            <Text style={styles.dayPreviewText}>{previewText}</Text>
+            <FormattedPreviewText markdown={day.contentMarkdown} style={styles.dayPreviewText} />
           ) : (
             isToday && <Text style={styles.emptyPromptText}>{t('noReflectionsSub')}</Text>
           )}
@@ -492,32 +465,22 @@ const createStyles = (theme: Theme) => StyleSheet.create({
     width: 1,
   },
   // Today Node
-  todayNodeRing: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    borderWidth: 2,
-    borderColor: theme.colors.accent,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: theme.colors.background,
-  },
   todayNode: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     backgroundColor: theme.colors.surface,
     justifyContent: 'center',
     alignItems: 'center',
   },
   nodeEmoji: {
-    fontSize: 16,
+    fontSize: 22,
   },
   // Past Day Node
   pastNode: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     backgroundColor: theme.colors.surface,
     borderWidth: 1,
     borderColor: theme.colors.border,
@@ -530,7 +493,7 @@ const createStyles = (theme: Theme) => StyleSheet.create({
     backgroundColor: 'transparent',
   },
   pastNodeEmoji: {
-    fontSize: 14,
+    fontSize: 18,
   },
   // Checkpoint Node
   checkpointNode: {
@@ -549,6 +512,8 @@ const createStyles = (theme: Theme) => StyleSheet.create({
     marginBottom: 4,
   },
   todayDateText: {
+    fontSize: 19,
+    fontFamily: theme.typography.fontFamily.bold,
     color: theme.colors.accent,
   },
   dayPreviewText: {

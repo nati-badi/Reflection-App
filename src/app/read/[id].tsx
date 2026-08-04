@@ -35,7 +35,9 @@ export default function ReadDayScreen() {
       if (dayDoc) {
         setContent(dayDoc.contentMarkdown || '');
         setMood(dayDoc.mood || null);
-        if (dayDoc.date) {
+        if (dayDoc.createdAt || dayDoc.updatedAt) {
+          setEntryDate(new Date(dayDoc.createdAt || dayDoc.updatedAt));
+        } else if (dayDoc.date) {
           setEntryDate(parseISO(dayDoc.date));
         }
       } else {

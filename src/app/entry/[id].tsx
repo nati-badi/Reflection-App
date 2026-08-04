@@ -10,6 +10,7 @@ import { useAppTheme } from '../../hooks/useAppTheme';
 import { Check, ArrowLeft, Bold, Italic, Heading, List, ListOrdered, Smile } from 'lucide-react-native';
 
 import { processEditorTextChange, renumberContentLists } from '../../utils/editorUtils';
+import { WYSIWYGEditor } from '../../components/WYSIWYGEditor';
 
 const MOODS = ['😁', '😊', '😐', '😔', '😠'];
 
@@ -33,9 +34,7 @@ export default function EntryScreen() {
   const [showQuickInsert, setShowQuickInsert] = useState(true);
   const [quickCategory, setQuickCategory] = useState<'emoji' | 'symbol'>('emoji');
 
-  const inputRef = useRef<TextInput>(null);
-  const [selection, setSelection] = useState({ start: 0, end: 0 });
-  const isProgrammaticInsert = useRef(false);
+  const editorBridgeRef = useRef<any>(null);
 
   const targetDateStr = typeof id === 'string' && id !== 'new' && id !== 'today' ? id : format(new Date(), 'yyyy-MM-dd');
 
@@ -52,7 +51,9 @@ export default function EntryScreen() {
         const loadedContent = dayDoc.contentMarkdown ? renumberContentLists(dayDoc.contentMarkdown) : '';
         setContent(loadedContent);
         setMood(dayDoc.mood || null);
-        if (dayDoc.date) {
+        if (dayDoc.createdAt || dayDoc.updatedAt) {
+          setEntryDate(new Date(dayDoc.createdAt || dayDoc.updatedAt));
+        } else if (dayDoc.date) {
           setEntryDate(parseISO(dayDoc.date));
         }
       }
@@ -86,145 +87,52 @@ export default function EntryScreen() {
     }
   };
 
-  const applySelection = (newPos: number) => {
-    isProgrammaticInsert.current = true;
-    setSelection({ start: newPos, end: newPos });
-
-    setTimeout(() => {
-      inputRef.current?.focus();
-
-      if (Platform.OS === 'web' && inputRef.current) {
-        try {
-          const domInput = (inputRef.current as any)._inputElement || 
-                          (inputRef.current as any).node || 
-                          (inputRef.current as any);
-          if (domInput && typeof domInput.setSelectionRange === 'function') {
-            domInput.setSelectionRange(newPos, newPos);
-          }
-        } catch (e) {
-          // ignore web DOM exception
-        }
-      }
-
-      setTimeout(() => {
-        isProgrammaticInsert.current = false;
-      }, 100);
-    }, 20);
-  };
-
-  const handleSelectionChange = (e: any) => {
-    if (isProgrammaticInsert.current) {
-      // Guard against stale native { start: 0, end: 0 } selection event fired on programmatic updates
-      return;
-    }
-    setSelection(e.nativeEvent.selection);
-  };
-
-  const handleTextChange = (newText: string) => {
-    const cursorPos = selection.start;
-    const { content: processedContent, newCursorPos } = processEditorTextChange(content, newText, cursorPos);
-    
-    setContent(processedContent);
-
-    if (newCursorPos !== cursorPos) {
-      applySelection(newCursorPos);
-    }
-  };
-
   const insertText = (str: string) => {
-    const start = selection.start;
-    const end = selection.end;
-    const newText = content.substring(0, start) + str + content.substring(end);
-    setContent(renumberContentLists(newText));
-    const newPos = start + str.length;
-    applySelection(newPos);
+    if (editorBridgeRef.current?.insertContent) {
+      editorBridgeRef.current.insertContent(str);
+    } else {
+      setContent(prev => prev + str);
+    }
+  };
+
+  const toggleBold = () => {
+    if (editorBridgeRef.current?.toggleBold) {
+      editorBridgeRef.current.toggleBold();
+    }
+  };
+
+  const toggleItalic = () => {
+    if (editorBridgeRef.current?.toggleItalic) {
+      editorBridgeRef.current.toggleItalic();
+    }
   };
 
   const cycleHeading = () => {
-    const start = selection.start;
-    const end = selection.end;
-    
-    const lineStart = content.lastIndexOf('\n', start - 1) + 1;
-    let lineEnd = content.indexOf('\n', end);
-    if (lineEnd === -1) lineEnd = content.length;
-    
-    const lineText = content.substring(lineStart, lineEnd);
-    
-    let newHeadingPrefix = '# ';
-    let strippedLine = lineText;
-    
-    if (lineText.startsWith('### ')) {
-      newHeadingPrefix = '';
-      strippedLine = lineText.substring(4);
-    } else if (lineText.startsWith('## ')) {
-      newHeadingPrefix = '### ';
-      strippedLine = lineText.substring(3);
-    } else if (lineText.startsWith('# ')) {
-      newHeadingPrefix = '## ';
-      strippedLine = lineText.substring(2);
+    if (editorBridgeRef.current?.toggleHeading) {
+      editorBridgeRef.current.toggleHeading(2);
     }
-    
-    const newLineText = newHeadingPrefix + strippedLine;
-    const newContent = content.substring(0, lineStart) + newLineText + content.substring(lineEnd);
-    
-    setContent(renumberContentLists(newContent));
-    const posOffset = newLineText.length - lineText.length;
-    const newPos = Math.max(lineStart, end + posOffset);
-    applySelection(newPos);
   };
 
-  const toggleListMarkdown = (type: 'bullet' | 'number') => {
-    const start = selection.start;
-    const end = selection.end;
-    
-    const lineStart = content.lastIndexOf('\n', start - 1) + 1;
-    let lineEnd = content.indexOf('\n', end);
-    if (lineEnd === -1) lineEnd = content.length;
-    
-    const lineText = content.substring(lineStart, lineEnd);
-    const isBullet = /^(\s*)([-*•])\s+/.test(lineText);
-    const isNumber = /^(\s*)(\d+)\.\s+/.test(lineText);
-
-    let newLineText = '';
-    if (type === 'bullet') {
-      if (isBullet) {
-        newLineText = lineText.replace(/^(\s*)([-*•])\s+/, '$1');
-      } else {
-        const stripped = lineText.replace(/^(\s*)(\d+)\.\s+/, '$1');
-        newLineText = `- ${stripped}`;
-      }
-    } else if (type === 'number') {
-      if (isNumber) {
-        newLineText = lineText.replace(/^(\s*)(\d+)\.\s+/, '$1');
-      } else {
-        const stripped = lineText.replace(/^(\s*)([-*•])\s+/, '$1');
-        newLineText = `1. ${stripped}`;
-      }
+  const toggleBulletList = () => {
+    if (editorBridgeRef.current?.toggleBulletList) {
+      editorBridgeRef.current.toggleBulletList();
     }
-
-    const rawContent = content.substring(0, lineStart) + newLineText + content.substring(lineEnd);
-    const updatedContent = renumberContentLists(rawContent);
-
-    setContent(updatedContent);
-    const posOffset = newLineText.length - lineText.length;
-    const newPos = Math.max(lineStart, end + posOffset);
-    applySelection(newPos);
   };
 
-  const insertMarkdown = (prefix: string, suffix: string = '') => {
-    const start = selection.start;
-    const end = selection.end;
-    const selectedText = content.substring(start, end);
-    const newText = content.substring(0, start) + prefix + selectedText + suffix + content.substring(end);
-    setContent(renumberContentLists(newText));
-    const newPos = start + prefix.length + selectedText.length + suffix.length;
-    applySelection(newPos);
+  const toggleOrderedList = () => {
+    if (editorBridgeRef.current?.toggleOrderedList) {
+      editorBridgeRef.current.toggleOrderedList();
+    }
   };
 
   const { secondaryDate, time } = formatDateDual(entryDate);
 
   if (loading) {
-    return <View style={styles.centerContainer}><ActivityIndicator color={theme.colors.accent} /></View>;
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color={theme.colors.accent} />
+      </View>
+    );
   }
 
   return (
@@ -263,19 +171,15 @@ export default function EntryScreen() {
           ))}
         </View>
 
-        {/* Bordered Editor Container */}
+        {/* WYSIWYG Editor Container */}
         <View style={styles.editorContainer}>
-          <TextInput
-            ref={inputRef}
-            style={styles.editor}
-            multiline
-            placeholder={t('placeholderContent')}
-            placeholderTextColor={theme.colors.textSecondary}
-            value={content}
-            onChangeText={handleTextChange}
-            selection={selection}
-            onSelectionChange={handleSelectionChange}
-            textAlignVertical="top"
+          <WYSIWYGEditor
+            initialContent={content}
+            onChangeMarkdown={setContent}
+            theme={theme}
+            onBridgeReady={(bridge) => {
+              editorBridgeRef.current = bridge;
+            }}
           />
         </View>
       </ScrollView>
@@ -318,19 +222,19 @@ export default function EntryScreen() {
 
       {/* Formatting Toolbar */}
       <View style={styles.toolbar}>
-        <TouchableOpacity style={styles.toolbarBtn} onPress={() => insertMarkdown('**', '**')}>
+        <TouchableOpacity style={styles.toolbarBtn} onPress={toggleBold}>
           <Bold size={20} color={theme.colors.textPrimary} />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.toolbarBtn} onPress={() => insertMarkdown('*', '*')}>
+        <TouchableOpacity style={styles.toolbarBtn} onPress={toggleItalic}>
           <Italic size={20} color={theme.colors.textPrimary} />
         </TouchableOpacity>
         <TouchableOpacity style={styles.toolbarBtn} onPress={cycleHeading}>
           <Heading size={20} color={theme.colors.textPrimary} />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.toolbarBtn} onPress={() => toggleListMarkdown('bullet')}>
+        <TouchableOpacity style={styles.toolbarBtn} onPress={toggleBulletList}>
           <List size={20} color={theme.colors.textPrimary} />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.toolbarBtn} onPress={() => toggleListMarkdown('number')}>
+        <TouchableOpacity style={styles.toolbarBtn} onPress={toggleOrderedList}>
           <ListOrdered size={20} color={theme.colors.textPrimary} />
         </TouchableOpacity>
         <TouchableOpacity 
@@ -404,7 +308,7 @@ const createStyles = (theme: Theme) => StyleSheet.create({
     borderColor: 'transparent',
   },
   moodItemSelected: {
-    borderColor: theme.colors.accent,
+    borderColor: theme.colors.accent + '60',
     backgroundColor: theme.colors.surface,
   },
   moodEmoji: {

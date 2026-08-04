@@ -15,10 +15,10 @@ export function getEthiopianTime(date: Date): string {
     period = 'ጠዋት';
   } else if (hours24 === 12) {
     period = 'ቀትር';
-  } else if (hours24 > 12 && hours24 < 19) {
+  } else if (hours24 > 12 && hours24 < 18) {
     period = 'ከሰዓት';
-  } else if (hours24 >= 19 && hours24 < 24) {
-    period = 'ምሽት';
+  } else if (hours24 >= 18 && hours24 < 24) {
+    period = 'ማታ';
   } else {
     period = 'ሌሊት';
   }
@@ -40,11 +40,10 @@ export function useTranslation() {
     if (language === 'am') {
       const ethMonthAm = ETHIOPIAN_MONTHS_AM[ethDate.month - 1];
       const weekdayAm = WEEKDAYS_AM[date.getDay()];
-      const gregStr = format(date, 'MMM d, yyyy');
       const ethStrAm = `${ethMonthAm} ${ethDate.date}፣ ${ethDate.year} ዓ.ም`;
       const fullDateAm = `${weekdayAm}፣ ${ethStrAm}`;
       const ethTime = getEthiopianTime(date);
-      const compactHeader = `${ethStrAm} · ${gregStr} · ${ethTime}`;
+      const compactHeader = `${ethStrAm} · ${ethTime}`;
       return {
         primaryDate: ethStrAm,
         secondaryDate: fullDateAm,
