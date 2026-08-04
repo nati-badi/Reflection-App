@@ -247,7 +247,35 @@ export const exportJournalDataAsPdf = async (userId: string, language: 'en' | 'a
     const fileName = `reflection-backup-${todayStr}.pdf`;
 
     if (Platform.OS === 'web') {
-      await Print.printAsync({ html: htmlContent });
+      // expo-print's web implementation ignores the `html` parameter and just calls window.print()
+      // So we manually create a hidden iframe and print its contents
+      const iframe = document.createElement('iframe');
+      iframe.style.position = 'absolute';
+      iframe.style.width = '0px';
+      iframe.style.height = '0px';
+      iframe.style.border = 'none';
+      document.body.appendChild(iframe);
+      
+      const doc = iframe.contentWindow?.document || iframe.contentDocument;
+      if (doc) {
+        doc.open();
+        doc.write(htmlContent);
+        doc.close();
+      }
+
+      // Wait a moment for styles to apply before printing
+      setTimeout(() => {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+        
+        // Cleanup after print dialog closes
+        setTimeout(() => {
+          if (document.body.contains(iframe)) {
+            document.body.removeChild(iframe);
+          }
+        }, 1000);
+      }, 500);
+
       return { success: true };
     } else {
       const { uri } = await Print.printToFileAsync({ html: htmlContent });

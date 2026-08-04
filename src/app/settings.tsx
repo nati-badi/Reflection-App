@@ -212,6 +212,7 @@ export default function SettingsScreen() {
         <View style={{ width: 40 }} />
       </View>
 
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 40 }}>
       {/* Appearance & Language Section */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Appearance</Text>
@@ -391,6 +392,7 @@ export default function SettingsScreen() {
           <Text style={styles.signOutText}>Delete Account</Text>
         </TouchableOpacity>
       </View>
+      </ScrollView>
 
       {/* Time Picker Modal */}
       <Modal
