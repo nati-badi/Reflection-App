@@ -11,6 +11,7 @@ import {
   FlatList,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Flame,
   Search,
@@ -48,6 +49,7 @@ import { db } from '../config/firebase';
 
 export default function TimelineFeedScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
   const { theme } = useAppTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
@@ -335,7 +337,7 @@ export default function TimelineFeedScreen() {
   return (
     <View style={styles.container}>
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: Math.max(insets.top, 16) + 8 }]}>
         <View style={styles.streakBadge}>
           <Animated.View style={[styles.flameWrapper, { transform: [{ scale: pulseAnim }] }]}>
             <Flame size={20} color={theme.colors.streak} fill={theme.colors.streak} />

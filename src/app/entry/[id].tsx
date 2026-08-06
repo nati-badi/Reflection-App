@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TextInput, StyleSheet, TouchableOpacity, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getDayDocument, saveDayDocument } from '../../services/db';
 import { format, parseISO } from 'date-fns';
 import { useAuthStore } from '../../store/useAuthStore';
@@ -20,6 +21,7 @@ const QUICK_SYMBOLS = ['—', '•', '…', '«', '»', '“', '”', '→', '�
 export default function EntryScreen() {
   const { id } = useLocalSearchParams();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
   const { theme } = useAppTheme();
   const styles = React.useMemo(() => createStyles(theme), [theme]);
@@ -142,7 +144,7 @@ export default function EntryScreen() {
       keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
     >
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: Math.max(insets.top, 16) + 8 }]}>
         <TouchableOpacity onPress={handleBack} style={styles.iconButton}>
           <ArrowLeft size={24} color={theme.colors.textPrimary} />
         </TouchableOpacity>

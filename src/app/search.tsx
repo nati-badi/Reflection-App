@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, FlatList, StyleSheet, TouchableOpacity, Platform, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, Search as SearchIcon, Calendar as CalendarIcon, List as ListIcon, X } from 'lucide-react-native';
 import { searchDays, getMonthDays } from '../services/db';
 import { useAuthStore } from '../store/useAuthStore';
@@ -14,6 +15,7 @@ import { CalendarGrid } from '../components/CalendarGrid';
 
 export default function SearchScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
   const { theme } = useAppTheme();
   const styles = React.useMemo(() => createStyles(theme), [theme]);
@@ -167,7 +169,7 @@ export default function SearchScreen() {
   return (
     <View style={styles.container}>
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: Math.max(insets.top, 16) + 8 }]}>
         <TouchableOpacity onPress={handleBack} style={styles.iconButton}>
           <ArrowLeft size={24} color={theme.colors.textPrimary} />
         </TouchableOpacity>
@@ -324,7 +326,6 @@ const createStyles = (theme: Theme) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,
-    paddingTop: theme.spacing.xl,
   },
   header: {
     flexDirection: 'row',

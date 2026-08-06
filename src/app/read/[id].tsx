@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, Alert, SafeAreaView, Platform } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getDayDocument } from '../../services/db';
 import { parseISO } from 'date-fns';
 import { useAuthStore } from '../../store/useAuthStore';
@@ -13,6 +14,7 @@ import Markdown from 'react-native-markdown-display';
 export default function ReadDayScreen() {
   const { id } = useLocalSearchParams();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
   const { theme } = useAppTheme();
   const styles = React.useMemo(() => createStyles(theme), [theme]);
@@ -66,7 +68,7 @@ export default function ReadDayScreen() {
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: Math.max(insets.top, 16) + 8 }]}>
         <TouchableOpacity style={styles.iconButton} onPress={handleBack}>
           <ArrowLeft color={theme.colors.textPrimary} size={24} />
         </TouchableOpacity>

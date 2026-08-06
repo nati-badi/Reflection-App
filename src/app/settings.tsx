@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Switch, Alert, Platform, Modal, ScrollView, ActivityIndicator, TextInput } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { signOut, sendEmailVerification } from 'firebase/auth';
 import { auth } from '../config/firebase';
 import { useSettingsStore } from '../store/useSettingsStore';
@@ -19,6 +20,7 @@ const REMINDER_TIME_OPTIONS = ['18:00', '19:00', '19:30', '20:00', '20:30', '21:
 
 export default function SettingsScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
   const { theme } = useAppTheme();
   const styles = React.useMemo(() => createStyles(theme), [theme]);
@@ -218,7 +220,7 @@ export default function SettingsScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: Math.max(insets.top, 16) + 8 }]}>
         <TouchableOpacity onPress={handleBack} style={styles.iconButton}>
           <ArrowLeft size={24} color={theme.colors.textPrimary} />
         </TouchableOpacity>
