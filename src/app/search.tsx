@@ -184,7 +184,7 @@ export default function SearchScreen() {
           >
             <ListIcon size={18} color={viewMode === 'keyword' ? '#FFFFFF' : theme.colors.textSecondary} style={{ marginRight: 6 }} />
             <Text style={[styles.toggleText, viewMode === 'keyword' && styles.toggleTextActive]}>
-              Keyword
+              {t('keywordTab')}
             </Text>
           </TouchableOpacity>
 
@@ -194,7 +194,7 @@ export default function SearchScreen() {
           >
             <CalendarIcon size={18} color={viewMode === 'calendar' ? '#FFFFFF' : theme.colors.textSecondary} style={{ marginRight: 6 }} />
             <Text style={[styles.toggleText, viewMode === 'calendar' && styles.toggleTextActive]}>
-              Calendar
+              {t('calendarView')}
             </Text>
           </TouchableOpacity>
         </View>
@@ -252,13 +252,13 @@ export default function SearchScreen() {
               style={[styles.subToggleBtn, calendarModeState === 'jump' && styles.subToggleBtnActive]}
               onPress={() => setCalendarModeState('jump')}
             >
-              <Text style={[styles.subToggleText, calendarModeState === 'jump' && styles.subToggleTextActive]}>Jump to Date</Text>
+              <Text style={[styles.subToggleText, calendarModeState === 'jump' && styles.subToggleTextActive]}>{t('jumpToDate')}</Text>
             </TouchableOpacity>
             <TouchableOpacity 
               style={[styles.subToggleBtn, calendarModeState === 'range' && styles.subToggleBtnActive]}
               onPress={() => setCalendarModeState('range')}
             >
-              <Text style={[styles.subToggleText, calendarModeState === 'range' && styles.subToggleTextActive]}>Search Range</Text>
+              <Text style={[styles.subToggleText, calendarModeState === 'range' && styles.subToggleTextActive]}>{t('searchRange')}</Text>
             </TouchableOpacity>
           </View>
 
@@ -276,7 +276,7 @@ export default function SearchScreen() {
           {calendarModeState === 'jump' ? (
             selectedJumpDate && !hasJumpEntry && !isJumpToday && (
               <View style={styles.emptyContainer}>
-                <Text style={styles.emptyText}>No reflection on this day.</Text>
+                <Text style={styles.emptyText}>{t('noReflectionOnDay')}</Text>
               </View>
             )
           ) : (
@@ -287,7 +287,7 @@ export default function SearchScreen() {
                     {formatDateDual(rangeStart).primaryDate} – {formatDateDual(rangeEnd).primaryDate}
                   </Text>
                   <TouchableOpacity onPress={clearRange} style={styles.clearRangeBtn}>
-                    <Text style={styles.clearRangeText}>Clear Range</Text>
+                    <Text style={styles.clearRangeText}>{t('clearRange')}</Text>
                   </TouchableOpacity>
                 </View>
               )}
@@ -295,7 +295,7 @@ export default function SearchScreen() {
                 <SearchIcon size={20} color={theme.colors.textSecondary} style={styles.searchIcon} />
                 <TextInput
                   style={styles.searchInput}
-                  placeholder={rangeStart && rangeEnd ? "Search in range..." : "Select range first..."}
+                  placeholder={rangeStart && rangeEnd ? t('searchInRangePlaceholder') : t('searchPlaceholder')}
                   placeholderTextColor={theme.colors.textSecondary}
                   value={searchQuery}
                   onChangeText={setSearchQuery}

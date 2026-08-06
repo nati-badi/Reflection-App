@@ -9,6 +9,7 @@ export const lightColors = {
   error: '#D32F2F',
   weeklyCheckpoint: '#FFB800',
   monthlyCheckpoint: '#4E9FFF',
+  streak: '#FF5500',
 };
 
 export const darkColors = {
@@ -22,6 +23,7 @@ export const darkColors = {
   error: '#FF6B6B',
   weeklyCheckpoint: '#FFC833',
   monthlyCheckpoint: '#73B0FF',
+  streak: '#FF6A00',
 };
 
 export type ThemeColors = typeof lightColors;

@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import { signOut, sendEmailVerification } from 'firebase/auth';
 import { auth } from '../config/firebase';
 import { useSettingsStore } from '../store/useSettingsStore';
+import { useDataStore } from '../store/useDataStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { useTranslation } from '../hooks/useTranslation';
 import { getStreak, deleteUserAccount } from '../services/db';
@@ -22,7 +23,7 @@ export default function SettingsScreen() {
   const { theme } = useAppTheme();
   const styles = React.useMemo(() => createStyles(theme), [theme]);
   const { t, language, setLanguage, formatDateDual } = useTranslation();
-  const [streak, setStreak] = useState<StreakMeta | null>(null);
+  const { streak, streakLoading } = useDataStore();
   const [isTimePickerVisible, setTimePickerVisible] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
@@ -44,9 +45,9 @@ export default function SettingsScreen() {
     setVerificationSentMsg('');
     try {
       await sendEmailVerification(auth.currentUser);
-      setVerificationSentMsg('Verification email sent! Please check your inbox.');
+      setVerificationSentMsg(t('verificationSentMsg'));
     } catch (e: any) {
-      Alert.alert('Error', e.message || 'Failed to send verification email.');
+      Alert.alert('Error', e.message || t('errSomethingWentWrong'));
     } finally {
       setResendingEmail(false);
     }
@@ -58,12 +59,12 @@ export default function SettingsScreen() {
     try {
       const res = await exportJournalData(user.uid, language as 'en' | 'am');
       if (res.success) {
-        Alert.alert(t('exportSuccess'), 'Your reflections backup has been exported.');
+        Alert.alert(t('exportSuccess'), t('exportSuccessMsg'));
       } else if (res.message) {
         Alert.alert(t('exportError'), res.message);
       }
     } catch (e: any) {
-      Alert.alert(t('exportError'), e.message || 'Failed to export data');
+      Alert.alert(t('exportError'), e.message || t('exportError'));
     } finally {
       setIsExporting(false);
     }
@@ -75,12 +76,12 @@ export default function SettingsScreen() {
     try {
       const res = await exportJournalDataAsPdf(user.uid, language as 'en' | 'am');
       if (res.success) {
-        Alert.alert(t('exportSuccess'), 'Your PDF backup has been exported.');
+        Alert.alert(t('exportSuccess'), t('exportPdfSuccessMsg'));
       } else if (res.message) {
         Alert.alert(t('exportError'), res.message);
       }
     } catch (e: any) {
-      Alert.alert(t('exportError'), e.message || 'Failed to export PDF');
+      Alert.alert(t('exportError'), e.message || t('exportError'));
     } finally {
       setIsExportingPdf(false);
     }
@@ -96,12 +97,6 @@ export default function SettingsScreen() {
     themePreference,
     setThemePreference
   } = useSettingsStore();
-
-  useEffect(() => {
-    if (user) {
-      getStreak(user.uid).then(setStreak);
-    }
-  }, [user]);
 
   const getFormattedReminderTime = () => {
     const [hours, minutes] = reminderTime.split(':').map(Number);
@@ -131,23 +126,23 @@ export default function SettingsScreen() {
     
     if (!isRecent) {
       Alert.alert(
-        'Re-authentication Required',
-        'For security, you must sign out and sign back in to confirm your identity before deleting your account.',
+        t('reauthRequiredTitle'),
+        t('reauthRequiredMsg'),
         [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Sign Out', style: 'destructive', onPress: handleSignOut }
+          { text: t('cancel'), style: 'cancel' },
+          { text: t('signOut'), style: 'destructive', onPress: handleSignOut }
         ]
       );
       return;
     }
 
     Alert.alert(
-      'Delete Account',
-      'This will permanently delete your account and ALL your reflections. This cannot be undone.',
+      t('deleteAccount'),
+      t('deleteAccountConfirmMsg'),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('cancel'), style: 'cancel' },
         { 
-          text: 'Continue', 
+          text: t('continue'), 
           style: 'destructive', 
           onPress: () => {
             setDeleteConfirmText('');
@@ -164,18 +159,15 @@ export default function SettingsScreen() {
     setIsDeleting(true);
     try {
       await deleteUserAccount(user.uid, auth.currentUser);
-      // AsyncStorage clear is handled in deleteUserAccount or we can do it here. 
-      // The user requested to clear local settings. We will just use useSettingsStore reset if needed, but signing out is enough for the user flow.
-      // Wait, we should clear AsyncStorage.
       const AsyncStorage = require('@react-native-async-storage/async-storage').default;
       await AsyncStorage.clear();
       
       setDeleteModalVisible(false);
-      Alert.alert('Account Deleted', 'Your account and data have been deleted.', [
-        { text: 'OK', onPress: () => router.replace('/(auth)/login') }
+      Alert.alert(t('accountDeletedTitle'), t('accountDeletedMsg'), [
+        { text: t('ok'), onPress: () => router.replace('/(auth)/login') }
       ]);
     } catch (e: any) {
-      Alert.alert('Error', e.message || 'Failed to delete account. Please try again.');
+      Alert.alert('Error', e.message || t('deleteAccountError'));
       setIsDeleting(false);
     }
   };
@@ -240,10 +232,10 @@ export default function SettingsScreen() {
         <View style={styles.verificationCard}>
           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: theme.spacing.xs }}>
             <AlertTriangle size={18} color={theme.colors.accent} style={{ marginRight: 8 }} />
-            <Text style={styles.verificationTitle}>Email Not Verified</Text>
+            <Text style={styles.verificationTitle}>{t('emailNotVerified')}</Text>
           </View>
           <Text style={styles.verificationText}>
-            Verify your email to ensure password reset reliability and account recovery.
+            {t('emailNotVerifiedDesc')}
           </Text>
           {verificationSentMsg ? (
             <Text style={styles.verificationSuccessText}>{verificationSentMsg}</Text>
@@ -256,7 +248,7 @@ export default function SettingsScreen() {
               {resendingEmail ? (
                 <ActivityIndicator color={theme.colors.accent} size="small" />
               ) : (
-                <Text style={styles.resendButtonText}>Resend verification email</Text>
+                <Text style={styles.resendButtonText}>{t('resendVerification')}</Text>
               )}
             </TouchableOpacity>
           )}
@@ -265,14 +257,14 @@ export default function SettingsScreen() {
 
       {/* Appearance & Language Section */}
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Appearance</Text>
+        <Text style={styles.sectionTitle}>{t('appearance')}</Text>
         <View style={[styles.languageToggleContainer, { marginBottom: theme.spacing.md }]}>
           <TouchableOpacity 
             style={[styles.languagePill, themePreference === 'system' && styles.languagePillActive]}
             onPress={() => setThemePreference('system')}
           >
             <Text style={[styles.languagePillText, themePreference === 'system' && styles.languagePillTextActive]}>
-              System
+              {t('systemTheme')}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity 
@@ -280,7 +272,7 @@ export default function SettingsScreen() {
             onPress={() => setThemePreference('light')}
           >
             <Text style={[styles.languagePillText, themePreference === 'light' && styles.languagePillTextActive]}>
-              Light
+              {t('lightTheme')}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity 
@@ -288,7 +280,7 @@ export default function SettingsScreen() {
             onPress={() => setThemePreference('dark')}
           >
             <Text style={[styles.languagePillText, themePreference === 'dark' && styles.languagePillTextActive]}>
-              Dark
+              {t('darkTheme')}
             </Text>
           </TouchableOpacity>
         </View>
@@ -320,10 +312,14 @@ export default function SettingsScreen() {
         
         <View style={styles.settingRow}>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Flame size={18} color="#FF5500" style={{ marginRight: theme.spacing.sm }} />
+            <Flame size={18} color={theme.colors.streak} style={{ marginRight: theme.spacing.sm }} />
             <Text style={styles.settingLabel}>{t('currentStreak')}</Text>
           </View>
-          <Text style={styles.statsValue}>{streak?.currentStreak || 0} {t('days')}</Text>
+          {streakLoading ? (
+            <ActivityIndicator size="small" color={theme.colors.streak} />
+          ) : (
+            <Text style={styles.statsValue}>{streak?.currentStreak || 0} {t('days')}</Text>
+          )}
         </View>
 
         <View style={styles.settingRow}>
@@ -331,7 +327,11 @@ export default function SettingsScreen() {
             <Trophy size={18} color="#FFB800" style={{ marginRight: theme.spacing.sm }} />
             <Text style={styles.settingLabel}>{t('bestStreak')}</Text>
           </View>
-          <Text style={styles.statsValue}>{streak?.longestStreak || 0} {t('days')}</Text>
+          {streakLoading ? (
+            <ActivityIndicator size="small" color={theme.colors.accent} />
+          ) : (
+            <Text style={styles.statsValue}>{streak?.longestStreak || 0} {t('days')}</Text>
+          )}
         </View>
       </View>
 
@@ -398,7 +398,7 @@ export default function SettingsScreen() {
             ) : (
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Download size={16} color={theme.colors.textPrimary} style={{ marginRight: 6 }} />
-                <Text style={styles.actionButtonText}>Export</Text>
+                <Text style={styles.actionButtonText}>{t('exportBtn')}</Text>
               </View>
             )}
           </TouchableOpacity>
@@ -406,8 +406,8 @@ export default function SettingsScreen() {
 
         <View style={styles.settingRow}>
           <View style={{ flex: 1, marginRight: theme.spacing.sm }}>
-            <Text style={styles.settingLabel}>Export as PDF</Text>
-            <Text style={styles.settingDescription}>Download a readable PDF document of all your reflections.</Text>
+            <Text style={styles.settingLabel}>{t('exportPdf')}</Text>
+            <Text style={styles.settingDescription}>{t('exportPdfSub')}</Text>
           </View>
           <TouchableOpacity
             style={[styles.actionButton, isExportingPdf && { opacity: 0.6 }]}
@@ -419,7 +419,7 @@ export default function SettingsScreen() {
             ) : (
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <FileText size={16} color={theme.colors.textPrimary} style={{ marginRight: 6 }} />
-                <Text style={styles.actionButtonText}>Export</Text>
+                <Text style={styles.actionButtonText}>{t('exportBtn')}</Text>
               </View>
             )}
           </TouchableOpacity>
@@ -436,10 +436,10 @@ export default function SettingsScreen() {
 
       {/* Danger Zone */}
       <View style={[styles.section, { borderTopWidth: 1, borderTopColor: theme.colors.border, paddingTop: 24, marginTop: 12 }]}>
-        <Text style={[styles.sectionTitle, { color: theme.colors.error }]}>Danger Zone</Text>
+        <Text style={[styles.sectionTitle, { color: theme.colors.error }]}>{t('dangerZone')}</Text>
         <TouchableOpacity style={[styles.signOutButton, { backgroundColor: theme.colors.error + '1A', borderColor: theme.colors.error, borderWidth: 1 }]} onPress={handleDeleteAccountInitiate}>
           <AlertTriangle size={20} color={theme.colors.error} style={{ marginRight: theme.spacing.sm }} />
-          <Text style={styles.signOutText}>Delete Account</Text>
+          <Text style={styles.signOutText}>{t('deleteAccount')}</Text>
         </TouchableOpacity>
       </View>
       </ScrollView>
@@ -497,9 +497,9 @@ export default function SettingsScreen() {
       >
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { padding: 24 }]}>
-            <Text style={[styles.modalTitle, { color: theme.colors.error, marginBottom: 12 }]}>Delete Account</Text>
+            <Text style={[styles.modalTitle, { color: theme.colors.error, marginBottom: 12 }]}>{t('deleteAccount')}</Text>
             <Text style={[styles.settingDescription, { marginBottom: 20 }]}>
-              Type <Text style={{ fontWeight: 'bold', color: theme.colors.textPrimary }}>DELETE</Text> to confirm you want to permanently delete your account and all data.
+              {t('typeDeletePrompt')}
             </Text>
             
             <TextInput
@@ -518,7 +518,7 @@ export default function SettingsScreen() {
                 onPress={() => setDeleteModalVisible(false)}
                 disabled={isDeleting}
               >
-                <Text style={[styles.actionButtonText, { color: theme.colors.textSecondary }]}>Cancel</Text>
+                <Text style={[styles.actionButtonText, { color: theme.colors.textSecondary }]}>{t('cancel')}</Text>
               </TouchableOpacity>
               
               <TouchableOpacity 
@@ -529,7 +529,7 @@ export default function SettingsScreen() {
                 {isDeleting ? (
                   <ActivityIndicator size="small" color="#FFF" />
                 ) : (
-                  <Text style={[styles.actionButtonText, { color: '#FFF' }]}>Delete</Text>
+                  <Text style={[styles.actionButtonText, { color: '#FFF' }]}>{t('deleteBtn')}</Text>
                 )}
               </TouchableOpacity>
             </View>

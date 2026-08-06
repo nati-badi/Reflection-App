@@ -1,7 +1,8 @@
-import { collection, doc, getDocs, query, orderBy, limit, setDoc, getDoc, where, startAfter, deleteDoc, writeBatch } from 'firebase/firestore';
+import { collection, doc, getDocs, query, orderBy, limit, setDoc, getDoc, where, startAfter, deleteDoc, writeBatch, onSnapshot, DocumentSnapshot } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import type { DayEntry, StreakMeta, WeeklySummary, MonthlySummary } from '../types';
 import { format, startOfWeek, endOfWeek, subWeeks, subDays, parseISO, startOfMonth, endOfMonth, subMonths, eachDayOfInterval } from 'date-fns';
+import { useDataStore } from '../store/useDataStore';
 
 // --- Utility Functions ---
 export const getTodayDateString = (): string => format(new Date(), 'yyyy-MM-dd');
@@ -71,9 +72,12 @@ export const saveDayDocument = async (
     createdAt = now;
   }
 
+  const monthDay = date.length >= 10 ? date.substring(5, 10) : undefined;
+
   const dayData: Partial<DayEntry> = {
     userId,
     date,
+    ...(monthDay ? { monthDay } : {}),
     contentMarkdown,
     mood,
     updatedAt: now,
@@ -96,7 +100,9 @@ export const saveDayDocument = async (
     await checkAndUpdateStreak(userId, date);
   }
 
-  return { id: docId, ...dayData } as DayEntry;
+  const savedEntry = { id: docId, ...dayData } as DayEntry;
+  useDataStore.getState().updateCachedDay(savedEntry);
+  return savedEntry;
 };
 
 export const getPastDays = async (userId: string, lastDocId?: string, limitCount = 20): Promise<DayEntry[]> => {
@@ -208,6 +214,55 @@ export const searchDays = async (
   }
 };
 
+export const getOnThisDayEntries = async (userId: string, targetDate: Date = new Date()): Promise<DayEntry[]> => {
+  const targetMonthDay = format(targetDate, 'MM-dd');
+  const currentYearStr = format(targetDate, 'yyyy');
+
+  // Direct indexed equality query on the derived monthDay field ("MM-DD")
+  const indexedQuery = query(
+    collection(db, 'days'),
+    where('userId', '==', userId),
+    where('monthDay', '==', targetMonthDay)
+  );
+
+  try {
+    const querySnapshot = await getDocs(indexedQuery);
+    let results = querySnapshot.docs
+      .map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as DayEntry))
+      .filter(day => {
+        if (!day.contentMarkdown || day.contentMarkdown.trim().length === 0) return false;
+        const entryYear = day.date.substring(0, 4);
+        return entryYear !== currentYearStr;
+      });
+
+    // Fallback if no indexed results found (e.g. for legacy entries created before monthDay field existed)
+    if (results.length === 0) {
+      const fallbackQuery = query(
+        collection(db, 'days'),
+        where('userId', '==', userId),
+        orderBy('date', 'desc'),
+        limit(200)
+      );
+      const fallbackSnapshot = await getDocs(fallbackQuery);
+      results = fallbackSnapshot.docs
+        .map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as DayEntry))
+        .filter(day => {
+          if (!day.contentMarkdown || day.contentMarkdown.trim().length === 0) return false;
+          if (!day.date || day.date.length < 10) return false;
+          const entryYear = day.date.substring(0, 4);
+          const entryMonthDay = day.date.substring(5, 10);
+          return entryMonthDay === targetMonthDay && entryYear !== currentYearStr;
+        });
+    }
+
+    // Sort descending by date (most recent past year first)
+    return results.sort((a, b) => b.date.localeCompare(a.date));
+  } catch (error) {
+    console.warn('getOnThisDayEntries error:', error);
+    return [];
+  }
+};
+
 // --- Streak & Meta Services ---
 
 export const getStreak = async (userId: string): Promise<StreakMeta> => {
@@ -215,12 +270,35 @@ export const getStreak = async (userId: string): Promise<StreakMeta> => {
     const docRef = doc(db, 'meta', userId);
     const docSnap = await getDoc(docRef);
     if (docSnap.exists()) {
-      return docSnap.data() as StreakMeta;
+      const data = docSnap.data() as StreakMeta;
+      useDataStore.getState().setStreak(data);
+      return data;
     }
   } catch (e) {
     console.warn('getStreak error:', e);
   }
-  return { currentStreak: 0, longestStreak: 0, lastEntryDate: '' };
+  const defaultStreak = { currentStreak: 0, longestStreak: 0, lastEntryDate: '' };
+  useDataStore.getState().setStreak(defaultStreak);
+  return defaultStreak;
+};
+
+export const subscribeToStreak = (userId: string) => {
+  const docRef = doc(db, 'meta', userId);
+  return onSnapshot(
+    docRef,
+    (docSnap: DocumentSnapshot) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data() as StreakMeta;
+        useDataStore.getState().setStreak(data);
+      } else {
+        const defaultStreak = { currentStreak: 0, longestStreak: 0, lastEntryDate: '' };
+        useDataStore.getState().setStreak(defaultStreak);
+      }
+    },
+    (error: any) => {
+      console.warn('subscribeToStreak error:', error);
+    }
+  );
 };
 
 const checkAndUpdateStreak = async (userId: string, targetDateStr: string = format(new Date(), 'yyyy-MM-dd')) => {
@@ -240,13 +318,15 @@ const checkAndUpdateStreak = async (userId: string, targetDateStr: string = form
   }
 
   const newLongestStreak = Math.max(streakData.longestStreak, newCurrentStreak);
+  const updatedStreak: StreakMeta = {
+    currentStreak: newCurrentStreak,
+    longestStreak: newLongestStreak,
+    lastEntryDate: targetDateStr
+  };
 
   try {
-    await setDoc(docRef, {
-      currentStreak: newCurrentStreak,
-      longestStreak: newLongestStreak,
-      lastEntryDate: targetDateStr
-    }, { merge: true });
+    await setDoc(docRef, updatedStreak, { merge: true });
+    useDataStore.getState().setStreak(updatedStreak);
   } catch (e) {
     console.warn('Updating streak meta failed:', e);
   }
@@ -746,6 +826,50 @@ export const cleanupDuplicateDays = async (userId: string): Promise<void> => {
     
   } catch (error) {
     console.warn('[Duplicate Cleanup] error:', error);
+  }
+};
+
+export const backfillMonthDay = async (userId: string) => {
+  try {
+    const metaRef = doc(db, 'meta', userId);
+    const metaSnap = await getDoc(metaRef);
+    if (metaSnap.exists() && metaSnap.data().hasBackfilledMonthDay) {
+      return; // Already backfilled for this user
+    }
+
+    console.log('[Backfill MonthDay] Running one-time monthDay backfill for user:', userId);
+
+    const q = query(
+      collection(db, 'days'),
+      where('userId', '==', userId)
+    );
+
+    const querySnapshot = await getDocs(q);
+    if (querySnapshot.empty) {
+      await setDoc(metaRef, { hasBackfilledMonthDay: true }, { merge: true });
+      return;
+    }
+
+    const batch = writeBatch(db);
+    let count = 0;
+
+    querySnapshot.docs.forEach(docSnap => {
+      const data = docSnap.data();
+      if (data.date && data.date.length >= 10 && !data.monthDay) {
+        const monthDay = data.date.substring(5, 10);
+        batch.update(docSnap.ref, { monthDay });
+        count++;
+      }
+    });
+
+    if (count > 0) {
+      await batch.commit();
+      console.log(`[Backfill MonthDay] Successfully backfilled ${count} day documents with monthDay.`);
+    }
+
+    await setDoc(metaRef, { hasBackfilledMonthDay: true }, { merge: true });
+  } catch (error) {
+    console.warn('[Backfill MonthDay] error:', error);
   }
 };
 

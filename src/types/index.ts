@@ -2,6 +2,7 @@ export interface DayEntry {
   id: string; // {userId}_{YYYY-MM-DD}
   userId: string;
   date: string; // YYYY-MM-DD
+  monthDay?: string; // MM-DD (for direct indexed On-This-Day queries)
   contentMarkdown: string;
   mood: string | null;
   createdAt: number; // Unix timestamp first created

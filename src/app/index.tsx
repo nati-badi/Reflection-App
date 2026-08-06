@@ -23,18 +23,22 @@ import { Theme } from '../constants/theme';
 import { useAppTheme } from '../hooks/useAppTheme';
 import { useTranslation } from '../hooks/useTranslation';
 import { FormattedPreviewText } from '../components/FormattedPreviewText';
+import { OnThisDayCard } from '../components/OnThisDayCard';
 import {
   getPastDays,
   getStreak,
+  subscribeToStreak,
   getWeeklySummariesHistory,
   getMonthlySummariesHistory,
   migrateEntriesToDays,
   cleanupDuplicateDays,
-  repairTimestamps,
-  getTodayDateString
+  backfillMonthDay,
+  getTodayDateString,
+  getOnThisDayEntries
 } from '../services/db';
 import { useAuthStore } from '../store/useAuthStore';
 import { useSettingsStore } from '../store/useSettingsStore';
+import { useDataStore } from '../store/useDataStore';
 import type { DayEntry, StreakMeta, WeeklySummary, MonthlySummary } from '../types';
 import { format, parseISO, differenceInDays } from 'date-fns';
 import { WeeklySummaryModal } from '../components/WeeklySummaryModal';
@@ -49,17 +53,26 @@ export default function TimelineFeedScreen() {
   const styles = useMemo(() => createStyles(theme), [theme]);
   const { t, formatDateDual } = useTranslation();
 
-  const [loading, setLoading] = useState(true);
+  const {
+    streak,
+    streakLoading,
+    todayDoc,
+    timelineDays: listDays,
+    onThisDayEntries,
+    weeklies,
+    monthlies,
+    setStreak,
+    setTodayDoc,
+    setTimelineDays: setListDays,
+    setOnThisDayEntries,
+    setWeeklies,
+    setMonthlies,
+  } = useDataStore();
+
+  const [loading, setLoading] = useState(listDays.length === 0);
   const [listLoadingMore, setListLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [lastDocId, setLastDocId] = useState<string | undefined>();
-
-  // Data states
-  const [todayDoc, setTodayDoc] = useState<DayEntry | null>(null);
-  const [listDays, setListDays] = useState<DayEntry[]>([]);
-  const [weeklies, setWeeklies] = useState<WeeklySummary[]>([]);
-  const [monthlies, setMonthlies] = useState<MonthlySummary[]>([]);
-  const [streak, setStreak] = useState<StreakMeta | null>(null);
 
   // Summary Modal View
   const [selectedSummary, setSelectedSummary] = useState<WeeklySummary | MonthlySummary | null>(null);
@@ -83,23 +96,19 @@ export default function TimelineFeedScreen() {
     ).start();
   }, [pulseAnim]);
 
-  // Real-time listener for today's document
+  // Real-time listener for today's document & streak meta
   useEffect(() => {
     if (!user) return;
     const today = getTodayDateString();
     const docId = `${user.uid}_${today}`;
     
-    // Use a query instead of direct doc() reference.
-    // If a document doesn't exist yet, a direct doc() listener can fail with 
-    // permission-denied if security rules rely on resource.data.userId.
-    // A query avoids this crash and successfully listens for creation.
     const q = query(
       collection(db, 'days'),
       where('userId', '==', user.uid),
       where('date', '==', today)
     );
 
-    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+    const unsubscribeToday = onSnapshot(q, (querySnapshot) => {
       if (!querySnapshot.empty) {
         const docSnap = querySnapshot.docs[0];
         setTodayDoc({ id: docSnap.id, ...docSnap.data() } as DayEntry);
@@ -116,7 +125,6 @@ export default function TimelineFeedScreen() {
       }
     }, (error) => {
       console.warn('onSnapshot today query error:', error);
-      // Fallback so the screen isn't completely blank during permission errors
       setTodayDoc({
         id: docId,
         userId: user.uid,
@@ -128,28 +136,37 @@ export default function TimelineFeedScreen() {
       });
     });
 
-    return () => unsubscribe();
+    const unsubscribeStreak = subscribeToStreak(user.uid);
+
+    return () => {
+      unsubscribeToday();
+      unsubscribeStreak();
+    };
   }, [user?.uid]);
 
   const initialLoad = useCallback(async () => {
     if (!user) return;
     try {
-      setLoading(true);
+      if (listDays.length === 0) {
+        setLoading(true);
+      }
       await migrateEntriesToDays(user.uid);
       await cleanupDuplicateDays(user.uid);
-      await repairTimestamps(user.uid);
+      await backfillMonthDay(user.uid);
 
-      const [streakData, initialPastDays, initialWeeklies, initialMonthlies] = await Promise.all([
+      const [streakData, initialPastDays, initialWeeklies, initialMonthlies, onThisDayData] = await Promise.all([
         getStreak(user.uid),
         getPastDays(user.uid, undefined, 20),
         getWeeklySummariesHistory(user.uid),
-        getMonthlySummariesHistory(user.uid)
+        getMonthlySummariesHistory(user.uid),
+        getOnThisDayEntries(user.uid)
       ]);
 
       setStreak(streakData);
       setListDays(initialPastDays);
       setWeeklies(initialWeeklies);
       setMonthlies(initialMonthlies);
+      setOnThisDayEntries(onThisDayData);
 
       setHasMore(initialPastDays.length >= 20);
       if (initialPastDays.length > 0) {
@@ -160,7 +177,7 @@ export default function TimelineFeedScreen() {
     } finally {
       setLoading(false);
     }
-  }, [user?.uid]);
+  }, [user?.uid, listDays.length]);
 
   const loadMorePastDays = async () => {
     if (!user || !hasMore || listLoadingMore) return;
@@ -321,9 +338,13 @@ export default function TimelineFeedScreen() {
       <View style={styles.header}>
         <View style={styles.streakBadge}>
           <Animated.View style={[styles.flameWrapper, { transform: [{ scale: pulseAnim }] }]}>
-            <Flame size={20} color="#FF5500" fill="#FF5500" />
+            <Flame size={20} color={theme.colors.streak} fill={theme.colors.streak} />
           </Animated.View>
-          <Text style={styles.streakNumber}>{streak?.currentStreak || 0}</Text>
+          {streakLoading ? (
+            <ActivityIndicator size="small" color={theme.colors.streak} style={{ marginHorizontal: 2 }} />
+          ) : (
+            <Text style={styles.streakNumber}>{streak?.currentStreak || 0}</Text>
+          )}
         </View>
 
         <View style={styles.headerDateContainer}>
@@ -354,6 +375,11 @@ export default function TimelineFeedScreen() {
           contentContainerStyle={styles.listContent}
           onEndReached={loadMorePastDays}
           onEndReachedThreshold={0.5}
+          ListHeaderComponent={
+            onThisDayEntries.length > 0 ? (
+              <OnThisDayCard entries={onThisDayEntries} />
+            ) : null
+          }
           ListFooterComponent={
             listLoadingMore ? <ActivityIndicator color={theme.colors.accent} style={{ marginVertical: 20 }} /> : null
           }

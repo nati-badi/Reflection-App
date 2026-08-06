@@ -4,27 +4,8 @@ import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswor
 import { auth } from '../../config/firebase';
 import { Theme } from '../../constants/theme';
 import { useAppTheme } from '../../hooks/useAppTheme';
+import { useTranslation } from '../../hooks/useTranslation';
 import { Eye, EyeOff } from 'lucide-react-native';
-
-// Map raw Firebase error codes to user-friendly messages
-const mapAuthError = (errorCode: string): string => {
-  switch (errorCode) {
-    case 'auth/invalid-credential':
-    case 'auth/wrong-password':
-    case 'auth/user-not-found':
-      return 'Incorrect email or password.';
-    case 'auth/invalid-email':
-      return 'Please enter a valid email address.';
-    case 'auth/email-already-in-use':
-      return 'An account with this email already exists.';
-    case 'auth/weak-password':
-      return 'Password must be at least 6 characters.';
-    case 'auth/too-many-requests':
-      return 'Too many attempts. Please wait a moment and try again.';
-    default:
-      return 'Something went wrong. Please try again.';
-  }
-};
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -40,7 +21,28 @@ export default function LoginScreen() {
   const confirmPasswordRef = useRef<TextInput>(null);
   
   const { theme } = useAppTheme();
+  const { t } = useTranslation();
   const styles = React.useMemo(() => createStyles(theme), [theme]);
+
+  // Map raw Firebase error codes to user-friendly translated messages
+  const mapAuthError = (errorCode: string): string => {
+    switch (errorCode) {
+      case 'auth/invalid-credential':
+      case 'auth/wrong-password':
+      case 'auth/user-not-found':
+        return t('errIncorrectEmailPassword');
+      case 'auth/invalid-email':
+        return t('errValidEmail');
+      case 'auth/email-already-in-use':
+        return t('errEmailInUse');
+      case 'auth/weak-password':
+        return t('errWeakPassword');
+      case 'auth/too-many-requests':
+        return t('errTooManyAttempts');
+      default:
+        return t('errSomethingWentWrong');
+    }
+  };
 
   const handleTextChange = (setter: React.Dispatch<React.SetStateAction<string>>) => (val: string) => {
     setter(val);
@@ -52,16 +54,16 @@ export default function LoginScreen() {
     const trimmedEmail = email.trim();
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(trimmedEmail)) {
-      setError('Please enter a valid email address.');
+      setError(t('errValidEmail'));
       return false;
     }
     if (!isLogin) {
       if (password.length < 6) {
-        setError('Password must be at least 6 characters.');
+        setError(t('errWeakPassword'));
         return false;
       }
       if (password !== confirmPassword) {
-        setError("Passwords don't match.");
+        setError(t('errPasswordsDontMatch'));
         return false;
       }
     }
@@ -85,7 +87,7 @@ export default function LoginScreen() {
         const userCred = await createUserWithEmailAndPassword(auth, trimmedEmail, password);
         try {
           await sendEmailVerification(userCred.user);
-          setSuccessMessage(`We sent a verification link to ${trimmedEmail}. Please check your inbox.`);
+          setSuccessMessage(t('verificationSentInbox').replace('{email}', trimmedEmail));
         } catch (vErr) {
           console.warn('sendEmailVerification failed:', vErr);
         }
@@ -99,13 +101,13 @@ export default function LoginScreen() {
 
   const handleForgotPassword = async () => {
     if (!email) {
-      setError('Please enter your email to reset password.');
+      setError(t('errEnterEmailReset'));
       return;
     }
     
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
-      setError('Please enter a valid email address.');
+      setError(t('errValidEmail'));
       return;
     }
 
@@ -114,14 +116,12 @@ export default function LoginScreen() {
     
     try {
       await sendPasswordResetEmail(auth, email.trim());
-      setSuccessMessage('Check your email for a reset link.');
+      setSuccessMessage(t('resetLinkSent'));
     } catch (err: any) {
-      // Firebase best practice is to always show success even if the email doesn't exist
-      // but we will map explicitly known format errors just in case.
       if (err.code === 'auth/invalid-email') {
-        setError('Please enter a valid email address.');
+        setError(t('errValidEmail'));
       } else {
-        setSuccessMessage('Check your email for a reset link.');
+        setSuccessMessage(t('resetLinkSent'));
       }
     } finally {
       setLoading(false);
@@ -150,15 +150,15 @@ export default function LoginScreen() {
       )}
 
       <View style={styles.formContainer}>
-        <Text style={styles.title}>Daily Reflection</Text>
-        <Text style={styles.subtitle}>{isLogin ? 'Welcome back' : 'Create your account'}</Text>
+        <Text style={styles.title}>{t('dailyReflectionTitle')}</Text>
+        <Text style={styles.subtitle}>{isLogin ? t('welcomeBackSub') : t('createAccountSub')}</Text>
 
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
         {successMessage ? <Text style={styles.successText}>{successMessage}</Text> : null}
 
         <TextInput
           style={styles.input}
-          placeholder="Email"
+          placeholder={t('email')}
           placeholderTextColor={theme.colors.textSecondary}
           value={email}
           onChangeText={handleTextChange(setEmail)}
@@ -174,7 +174,7 @@ export default function LoginScreen() {
           <TextInput
             ref={passwordRef}
             style={[styles.input, styles.passwordInput]}
-            placeholder="Password"
+            placeholder={t('password')}
             placeholderTextColor={theme.colors.textSecondary}
             value={password}
             onChangeText={handleTextChange(setPassword)}
@@ -187,6 +187,7 @@ export default function LoginScreen() {
           <TouchableOpacity 
             style={styles.eyeIcon} 
             onPress={() => setShowPassword(!showPassword)}
+            accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
           >
             {showPassword ? (
               <EyeOff size={20} color={theme.colors.textSecondary} />
@@ -201,7 +202,7 @@ export default function LoginScreen() {
             <TextInput
               ref={confirmPasswordRef}
               style={[styles.input, styles.passwordInput]}
-              placeholder="Confirm Password"
+              placeholder={t('confirmPasswordPlaceholder')}
               placeholderTextColor={theme.colors.textSecondary}
               value={confirmPassword}
               onChangeText={handleTextChange(setConfirmPassword)}
@@ -222,7 +223,7 @@ export default function LoginScreen() {
           {loading ? (
             <ActivityIndicator color={theme.colors.accentForeground} />
           ) : (
-            <Text style={styles.buttonText}>{isLogin ? 'Log In' : 'Sign Up'}</Text>
+            <Text style={styles.buttonText}>{isLogin ? t('login') : t('signUp')}</Text>
           )}
         </TouchableOpacity>
 
@@ -232,7 +233,7 @@ export default function LoginScreen() {
             onPress={handleForgotPassword}
             disabled={loading}
           >
-            <Text style={styles.forgotPasswordText}>Forgot password?</Text>
+            <Text style={styles.forgotPasswordText}>{t('forgotPassword')}</Text>
           </TouchableOpacity>
         )}
 
@@ -246,7 +247,7 @@ export default function LoginScreen() {
           disabled={loading}
         >
           <Text style={styles.toggleText}>
-            {isLogin ? "Don't have an account? Sign up" : "Already have an account? Log in"}
+            {isLogin ? t('dontHaveAccount') : t('alreadyHaveAccount')}
           </Text>
         </TouchableOpacity>
       </View>

@@ -6,12 +6,7 @@ import { auth } from '../config/firebase';
 import { useAuthStore } from '../store/useAuthStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { LockScreen } from '../components/LockScreen';
-import { 
-  useFonts,
-  Inter_400Regular,
-  Inter_500Medium,
-  Inter_700Bold,
-} from '@expo-google-fonts/inter';
+import { useFonts } from 'expo-font';
 import { useAppTheme } from '../hooks/useAppTheme';
 import { StatusBar } from 'expo-status-bar';
 import { View, Platform } from 'react-native';
@@ -22,9 +17,9 @@ export default function RootLayout() {
   const [isLocked, setIsLocked] = useState(isBiometricEnabled);
 
   const [fontsLoaded] = useFonts({
-    Inter_400Regular,
-    Inter_500Medium,
-    Inter_700Bold,
+    Inter_400Regular: require('../../assets/fonts/Inter_400Regular.ttf'),
+    Inter_500Medium: require('../../assets/fonts/Inter_500Medium.ttf'),
+    Inter_700Bold: require('../../assets/fonts/Inter_700Bold.ttf'),
   });
   
   const { theme, isDark } = useAppTheme();
