@@ -121,7 +121,7 @@ export const translations = {
     verificationSentInbox: 'We sent a verification link to {email}. Please check your inbox.',
 
     // Auth & Lock Screen
-    dailyReflectionTitle: 'Daily Reflection',
+    dailyReflectionTitle: 'IKowMe',
     welcomeBackSub: 'Welcome back',
     createAccountSub: 'Create your account',
     welcomeBack: 'Welcome Back',
@@ -136,6 +136,19 @@ export const translations = {
     dontHaveAccount: "Don't have an account? Sign up",
     alreadyHaveAccount: 'Already have an account? Log in',
     biometricError: 'Authentication failed',
+
+    // Onboarding Screen
+    onboardingSkip: 'Skip',
+    onboardingGetStarted: 'Get Started',
+    onboardingNext: 'Next',
+    onboardingSlide1Title: 'Welcome to IKowMe',
+    onboardingSlide1Desc: 'A private, continuous space to record, reflect, and know yourself better every day.',
+    onboardingSlide2Title: 'Build Your Streak',
+    onboardingSlide2Desc: 'Cultivate a daily reflection habit and keep your momentum alive with a visual flame streak.',
+    onboardingSlide3Title: 'Private & Secure',
+    onboardingSlide3Desc: 'Your personal reflections are protected with biometric app lock and encrypted storage.',
+    onboardingSlide4Title: 'Reflect & Retrospect',
+    onboardingSlide4Desc: 'Revisit memories from previous years with On This Day retrospectives and monthly insights.',
 
     // Validation & Auth Error Messages
     errIncorrectEmailPassword: 'Incorrect email or password.',
@@ -266,7 +279,7 @@ export const translations = {
     verificationSentInbox: 'የማረጋገጫ ሊንክ ወደ {email} ልከናል። እባክዎ ኢሜይልዎን ይመልከቱ።',
 
     // Auth & Lock Screen
-    dailyReflectionTitle: 'የዕለት ተዕለት ማስታወሻ',
+    dailyReflectionTitle: 'IKowMe',
     welcomeBackSub: 'እንኳን ደህና መጡ',
     createAccountSub: 'መለያዎን ይፍጠሩ',
     welcomeBack: 'እንኳን ደህና መጡ',
@@ -281,6 +294,19 @@ export const translations = {
     dontHaveAccount: 'መለያ የሎትም? ተመዝገብ',
     alreadyHaveAccount: 'መለያ አለዎት? ይግቡ',
     biometricError: 'ማረጋገጥ አልተሳካም',
+
+    // Onboarding Screen
+    onboardingSkip: 'ለፍ',
+    onboardingGetStarted: 'ጀምር',
+    onboardingNext: 'ቀጣይ',
+    onboardingSlide1Title: 'እንኳን ወደ IKowMe በደህና መጡ',
+    onboardingSlide1Desc: 'ራሳችሁን በየቀኑ በደንብ የሚያውቁበት እና የሚያስቡበት የግል የዕለት ተዕለት ማስታወሻ።',
+    onboardingSlide2Title: 'ተከታታይነትዎን ይገንቡ',
+    onboardingSlide2Desc: 'በየቀኑ በመጻፍ የተከታታይነት የእሳት ምልክትዎን ያሳድጉ እና ልማድዎን ያጠናክሩ።',
+    onboardingSlide3Title: 'የተጠበቀ እና ሚስጥራዊ',
+    onboardingSlide3Desc: 'ማስታወሻዎችዎ በባዮሜትሪክ መቆለፊያ የተጠበቁ እና 100% ሚስጥራዊ ናቸው።',
+    onboardingSlide4Title: 'ያስተውሉ እና ያድጉ',
+    onboardingSlide4Desc: 'ያለፉ ታሪኮችዎን በዓመታት ልዩነት እና በወርሃዊ ማጠቃለያዎች ይመልከቱ።',
 
     // Validation & Auth Error Messages
     errIncorrectEmailPassword: 'የተሳሳተ ኢሜይል ወይም የይለፍ ቃል ነው።',

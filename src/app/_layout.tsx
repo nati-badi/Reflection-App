@@ -1,6 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { AppState, AppStateStatus } from 'react-native';
+import { AppState } from 'react-native';
 import { Slot, useRouter, useSegments } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from '../config/firebase';
 import { useAuthStore } from '../store/useAuthStore';
@@ -11,10 +13,13 @@ import { useAppTheme } from '../hooks/useAppTheme';
 import { StatusBar } from 'expo-status-bar';
 import { View, Platform } from 'react-native';
 
+SplashScreen.preventAutoHideAsync().catch(() => {});
+
 export default function RootLayout() {
   const { user, setUser, setLoading, loading } = useAuthStore();
   const { lockTimeoutMinutes, isBiometricEnabled } = useSettingsStore();
   const [isLocked, setIsLocked] = useState(isBiometricEnabled);
+  const [hasSeenOnboarding, setHasSeenOnboarding] = useState<boolean | null>(null);
 
   const [fontsLoaded] = useFonts({
     Inter_400Regular: require('../../assets/fonts/Inter_400Regular.ttf'),
@@ -31,6 +36,12 @@ export default function RootLayout() {
   const backgroundTime = useRef<number | null>(null);
 
   useEffect(() => {
+    AsyncStorage.getItem('@has_seen_onboarding').then((val) => {
+      setHasSeenOnboarding(val === 'true');
+    });
+  }, []);
+
+  useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       setLoading(false);
@@ -39,18 +50,27 @@ export default function RootLayout() {
   }, []);
 
   useEffect(() => {
-    if (loading) return;
+    if (fontsLoaded && !loading && hasSeenOnboarding !== null) {
+      SplashScreen.hideAsync().catch(() => {});
+    }
+  }, [fontsLoaded, loading, hasSeenOnboarding]);
 
-    const inAuthGroup = segments[0] === '(auth)';
+  useEffect(() => {
+    if (loading || hasSeenOnboarding === null) return;
 
-    if (!user && !inAuthGroup) {
-      // Redirect to the login page.
-      router.replace('/(auth)/login');
-    } else if (user && inAuthGroup) {
-      // Redirect away from the login page.
+    const inAuthGroup = (segments[0] as any) === '(auth)';
+    const inOnboarding = (segments[0] as any) === 'onboarding';
+
+    if (!user) {
+      if (!hasSeenOnboarding && !inOnboarding) {
+        router.replace('/onboarding' as any);
+      } else if (hasSeenOnboarding && !inAuthGroup && !inOnboarding) {
+        router.replace('/(auth)/login');
+      }
+    } else if (user && (inAuthGroup || inOnboarding)) {
       router.replace('/');
     }
-  }, [user, segments, loading]);
+  }, [user, segments, loading, hasSeenOnboarding]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', nextAppState => {
