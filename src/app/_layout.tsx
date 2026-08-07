@@ -8,6 +8,7 @@ import { auth } from '../config/firebase';
 import { useAuthStore } from '../store/useAuthStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { LockScreen } from '../components/LockScreen';
+import { BiometricConsentModal } from '../components/BiometricConsentModal';
 import { useFonts } from 'expo-font';
 import { useAppTheme } from '../hooks/useAppTheme';
 import { StatusBar } from 'expo-status-bar';
@@ -17,9 +18,15 @@ SplashScreen.preventAutoHideAsync().catch(() => {});
 
 export default function RootLayout() {
   const { user, setUser, setLoading, loading } = useAuthStore();
-  const { lockTimeoutMinutes, isBiometricEnabled } = useSettingsStore();
+  const {
+    lockTimeoutMinutes,
+    isBiometricEnabled,
+    hasSeenOnboarding,
+    setHasSeenOnboarding,
+    hasPromptedBiometrics,
+  } = useSettingsStore();
+
   const [isLocked, setIsLocked] = useState(isBiometricEnabled);
-  const [hasSeenOnboarding, setHasSeenOnboarding] = useState<boolean | null>(null);
 
   const [fontsLoaded] = useFonts({
     Inter_400Regular: require('../../assets/fonts/Inter_400Regular.ttf'),
@@ -37,7 +44,9 @@ export default function RootLayout() {
 
   useEffect(() => {
     AsyncStorage.getItem('@has_seen_onboarding').then((val) => {
-      setHasSeenOnboarding(val === 'true');
+      if (val === 'true') {
+        setHasSeenOnboarding(true);
+      }
     });
   }, []);
 
@@ -50,13 +59,13 @@ export default function RootLayout() {
   }, []);
 
   useEffect(() => {
-    if (fontsLoaded && !loading && hasSeenOnboarding !== null) {
+    if (fontsLoaded && !loading) {
       SplashScreen.hideAsync().catch(() => {});
     }
-  }, [fontsLoaded, loading, hasSeenOnboarding]);
+  }, [fontsLoaded, loading]);
 
   useEffect(() => {
-    if (loading || hasSeenOnboarding === null) return;
+    if (loading) return;
 
     const inAuthGroup = (segments[0] as any) === '(auth)';
     const inOnboarding = (segments[0] as any) === 'onboarding';
@@ -103,6 +112,8 @@ export default function RootLayout() {
     return null;
   }
 
+  const showConsentModal = user !== null && !hasPromptedBiometrics;
+
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
       {Platform.OS === 'web' && (
@@ -120,6 +131,12 @@ export default function RootLayout() {
       <StatusBar style={isDark ? 'light' : 'dark'} />
       <Slot />
       {isLocked && <LockScreen onUnlock={handleUnlock} />}
+      {showConsentModal && (
+        <BiometricConsentModal
+          visible={showConsentModal}
+          onDismiss={() => {}}
+        />
+      )}
     </View>
   );
 }

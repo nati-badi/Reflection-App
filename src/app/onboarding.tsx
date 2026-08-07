@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Flame, ShieldCheck, Sparkles, ArrowRight } from 'lucide-react-native';
 import { useAppTheme } from '../hooks/useAppTheme';
 import { useTranslation } from '../hooks/useTranslation';
+import { useSettingsStore } from '../store/useSettingsStore';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const ONBOARDING_STORAGE_KEY = '@has_seen_onboarding';
@@ -23,6 +24,7 @@ export default function OnboardingScreen() {
   const insets = useSafeAreaInsets();
   const { theme } = useAppTheme();
   const { t } = useTranslation();
+  const setHasSeenOnboarding = useSettingsStore((state) => state.setHasSeenOnboarding);
   const flatListRef = useRef<FlatList>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
 
@@ -49,7 +51,7 @@ export default function OnboardingScreen() {
       desc: t('onboardingSlide3Desc'),
       icon: (
         <View style={[styles.iconCircle, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
-          <ShieldCheck size={54} color={theme.colors.accent} />
+          <ShieldCheck size={54} color={theme.colors.streak} />
         </View>
       ),
     },
@@ -59,13 +61,14 @@ export default function OnboardingScreen() {
       desc: t('onboardingSlide4Desc'),
       icon: (
         <View style={[styles.iconCircle, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
-          <Sparkles size={54} color={theme.colors.accent} />
+          <Sparkles size={54} color={theme.colors.streak} />
         </View>
       ),
     },
   ];
 
   const completeOnboarding = async () => {
+    setHasSeenOnboarding(true);
     try {
       await AsyncStorage.setItem(ONBOARDING_STORAGE_KEY, 'true');
     } catch (e) {
@@ -130,7 +133,7 @@ export default function OnboardingScreen() {
               style={[
                 styles.dot,
                 {
-                  backgroundColor: idx === currentIndex ? theme.colors.accent : theme.colors.border,
+                  backgroundColor: idx === currentIndex ? theme.colors.streak : theme.colors.border,
                   width: idx === currentIndex ? 24 : 8,
                 },
               ]}
@@ -141,7 +144,7 @@ export default function OnboardingScreen() {
         {/* Next / Get Started Action Button */}
         <TouchableOpacity
           onPress={handleNext}
-          style={[styles.nextButton, { backgroundColor: theme.colors.accent }]}
+          style={[styles.nextButton, { backgroundColor: theme.colors.streak }]}
           activeOpacity={0.8}
         >
           <Text style={styles.nextText}>
