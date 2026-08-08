@@ -3,7 +3,7 @@ export const lightColors = {
   surface: '#F9F9F9',
   textPrimary: '#1A1A1A',
   textSecondary: '#666666',
-  border: '#EAEAEA',
+  border: '#B0B0B0',
   accent: '#000000', // Monochrome accent
   accentForeground: '#FFFFFF',
   error: '#D32F2F',

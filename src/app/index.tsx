@@ -41,7 +41,7 @@ import { useAuthStore } from '../store/useAuthStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useDataStore } from '../store/useDataStore';
 import type { DayEntry, StreakMeta, WeeklySummary, MonthlySummary } from '../types';
-import { format, parseISO, differenceInDays } from 'date-fns';
+import { format, parseISO, differenceInDays, differenceInCalendarDays } from 'date-fns';
 import { WeeklySummaryModal } from '../components/WeeklySummaryModal';
 import { mergeTimelineItems, TimelineItem } from '../utils/timelineUtils';
 import { doc, onSnapshot, query, collection, where } from 'firebase/firestore';
@@ -222,25 +222,29 @@ export default function TimelineFeedScreen() {
   };
 
   const renderTimelineItem = ({ item, index }: { item: TimelineItem; index: number }) => {
-    // Find next DayEntry to determine if dashed line is needed
-    let isDashed = false;
-    let nextDayStr: string | null = null;
-    
-    // Scan ahead for the next actual day to see if there's a gap
-    for (let i = index + 1; i < timelineItems.length; i++) {
+    // Find closest day date at or above current index
+    let dateAbove: string | null = null;
+    for (let i = index; i >= 0; i--) {
       if (timelineItems[i].type === 'day' || timelineItems[i].type === 'today') {
-        nextDayStr = (timelineItems[i].data as DayEntry).date;
+        dateAbove = (timelineItems[i].data as DayEntry).date;
         break;
       }
     }
 
-    if (item.type === 'day' || item.type === 'today') {
-      const currentDayStr = (item.data as DayEntry).date;
-      if (nextDayStr) {
-        const diff = differenceInDays(parseISO(currentDayStr), parseISO(nextDayStr));
-        if (diff > 1) {
-          isDashed = true;
-        }
+    // Find closest day date after current index
+    let dateBelow: string | null = null;
+    for (let i = index + 1; i < timelineItems.length; i++) {
+      if (timelineItems[i].type === 'day' || timelineItems[i].type === 'today') {
+        dateBelow = (timelineItems[i].data as DayEntry).date;
+        break;
+      }
+    }
+
+    let isDashed = false;
+    if (dateAbove && dateBelow) {
+      const diff = differenceInCalendarDays(parseISO(dateAbove), parseISO(dateBelow));
+      if (diff > 1) {
+        isDashed = true;
       }
     }
 
@@ -298,7 +302,7 @@ export default function TimelineFeedScreen() {
       >
         <View style={styles.leftCol}>
           {isToday ? (
-            <View style={[styles.todayNode, !day.mood && styles.pastNodeEmpty]}>
+            <View style={styles.todayNode}>
               {day.mood ? (
                 <Text style={styles.nodeEmoji}>{day.mood}</Text>
               ) : (
@@ -498,6 +502,8 @@ const createStyles = (theme: Theme) => StyleSheet.create({
     height: 42,
     borderRadius: 21,
     backgroundColor: theme.colors.surface,
+    borderWidth: 1.5,
+    borderColor: theme.colors.border,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -510,7 +516,7 @@ const createStyles = (theme: Theme) => StyleSheet.create({
     height: 34,
     borderRadius: 17,
     backgroundColor: theme.colors.surface,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: theme.colors.border,
     justifyContent: 'center',
     alignItems: 'center',
@@ -519,6 +525,7 @@ const createStyles = (theme: Theme) => StyleSheet.create({
   pastNodeEmpty: {
     borderStyle: 'dashed',
     backgroundColor: 'transparent',
+    borderColor: theme.colors.border,
   },
   pastNodeEmoji: {
     fontSize: 18,

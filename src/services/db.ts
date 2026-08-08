@@ -1,7 +1,7 @@
 import { collection, doc, getDocs, query, orderBy, limit, setDoc, getDoc, where, startAfter, deleteDoc, writeBatch, onSnapshot, DocumentSnapshot } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import type { DayEntry, StreakMeta, WeeklySummary, MonthlySummary } from '../types';
-import { format, startOfWeek, endOfWeek, subWeeks, subDays, parseISO, startOfMonth, endOfMonth, subMonths, eachDayOfInterval } from 'date-fns';
+import { format, startOfWeek, endOfWeek, subWeeks, subDays, parseISO, startOfMonth, endOfMonth, subMonths, eachDayOfInterval, differenceInCalendarDays } from 'date-fns';
 import { useDataStore } from '../store/useDataStore';
 
 // --- Utility Functions ---
@@ -265,12 +265,42 @@ export const getOnThisDayEntries = async (userId: string, targetDate: Date = new
 
 // --- Streak & Meta Services ---
 
+export const evaluateStreakData = (userId: string, data: StreakMeta): StreakMeta => {
+  if (!data.lastEntryDate) return data;
+
+  const todayStr = format(new Date(), 'yyyy-MM-dd');
+  const yesterdayStr = format(subDays(new Date(), 1), 'yyyy-MM-dd');
+
+  // If last entry was today or yesterday, streak is still active
+  if (data.lastEntryDate === todayStr || data.lastEntryDate === yesterdayStr) {
+    return data;
+  }
+
+  // If last entry was prior to yesterday, streak is broken -> reset currentStreak to 0
+  const daysDiff = differenceInCalendarDays(parseISO(todayStr), parseISO(data.lastEntryDate));
+  if (daysDiff > 1 && data.currentStreak > 0) {
+    const updated: StreakMeta = {
+      ...data,
+      currentStreak: 0,
+    };
+    // Persist reset to Firestore asynchronously
+    const docRef = doc(db, 'meta', userId);
+    setDoc(docRef, { currentStreak: 0 }, { merge: true }).catch((e) => {
+      console.warn('Persisting evaluated streak reset failed:', e);
+    });
+    return updated;
+  }
+
+  return data;
+};
+
 export const getStreak = async (userId: string): Promise<StreakMeta> => {
   try {
     const docRef = doc(db, 'meta', userId);
     const docSnap = await getDoc(docRef);
     if (docSnap.exists()) {
-      const data = docSnap.data() as StreakMeta;
+      const rawData = docSnap.data() as StreakMeta;
+      const data = evaluateStreakData(userId, rawData);
       useDataStore.getState().setStreak(data);
       return data;
     }
@@ -288,7 +318,8 @@ export const subscribeToStreak = (userId: string) => {
     docRef,
     (docSnap: DocumentSnapshot) => {
       if (docSnap.exists()) {
-        const data = docSnap.data() as StreakMeta;
+        const rawData = docSnap.data() as StreakMeta;
+        const data = evaluateStreakData(userId, rawData);
         useDataStore.getState().setStreak(data);
       } else {
         const defaultStreak = { currentStreak: 0, longestStreak: 0, lastEntryDate: '' };
