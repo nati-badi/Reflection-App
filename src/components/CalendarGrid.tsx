@@ -150,7 +150,7 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
                   ]}>
                   {format(dayDate, 'd')}
                 </Text>
-                {hasEntry && <View style={[styles.entryDot, (isSelected || (isInRange && !isSelected)) && styles.entryDotSelected]} />}
+                {hasEntry && <View style={[styles.entryDot, isSelected && styles.entryDotSelected]} />}
                 </TouchableOpacity>
               </View>
             );
@@ -247,7 +247,8 @@ const createStyles = (theme: Theme) => StyleSheet.create({
     fontFamily: theme.typography.fontFamily.bold,
   },
   dayCellTextInRange: {
-    color: theme.colors.accentForeground || theme.colors.textPrimary,
+    color: theme.colors.textPrimary,
+    fontFamily: theme.typography.fontFamily.bold,
   },
   entryDot: {
     width: 4,
