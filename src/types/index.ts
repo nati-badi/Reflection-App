@@ -16,6 +16,10 @@ export interface StreakMeta {
   currentStreak: number;
   longestStreak: number;
   lastEntryDate: string; // YYYY-MM-DD
+  migratedToDays?: boolean;
+  hasRepairedTimestamps?: boolean;
+  hasCleanedDuplicateDays?: boolean;
+  hasBackfilledMonthDay?: boolean;
 }
 
 export interface WeeklySummary {

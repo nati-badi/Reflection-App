@@ -268,8 +268,8 @@ export const getOnThisDayEntries = async (userId: string, targetDate: Date = new
 export const evaluateStreakData = (userId: string, data: StreakMeta): StreakMeta => {
   if (!data.lastEntryDate) return data;
 
-  const todayStr = format(new Date(), 'yyyy-MM-dd');
-  const yesterdayStr = format(subDays(new Date(), 1), 'yyyy-MM-dd');
+  const todayStr = getTodayDateString();
+  const yesterdayStr = format(subDays(parseISO(todayStr), 1), 'yyyy-MM-dd');
 
   // If last entry was today or yesterday, streak is still active
   if (data.lastEntryDate === todayStr || data.lastEntryDate === yesterdayStr) {
