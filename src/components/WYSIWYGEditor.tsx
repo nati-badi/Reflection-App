@@ -30,6 +30,7 @@ export function WYSIWYGEditor({ initialContent, onChangeMarkdown, theme, onBridg
     initialContent: htmlContent,
     autofocus: false,
     avoidIosKeyboard: true,
+    disableColorHighlight: true,
     theme: editorTheme,
     onChange: async () => {
       if (editor) {
@@ -44,22 +45,51 @@ export function WYSIWYGEditor({ initialContent, onChangeMarkdown, theme, onBridg
     },
   });
 
-  // Inject dynamic CSS whenever theme changes (Dark Mode background fix)
+  const applyThemeCSS = (bridge: ReturnType<typeof useEditorBridge>) => {
+    if (!bridge?.injectCSS) return;
+    console.log(`[WYSIWYGEditor] Injecting theme CSS into WebView. isDark: ${theme.dark}, surface: ${theme.colors.surface}`);
+    const dynamicCss = `
+      body, html, .ProseMirror, #root, div[contenteditable] {
+        background-color: ${theme.colors.surface} !important;
+        color: ${theme.colors.textPrimary} !important;
+        caret-color: ${theme.colors.accent} !important;
+      }
+      .ProseMirror p, .ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror li, .ProseMirror span, .ProseMirror div, .ProseMirror blockquote {
+        color: ${theme.colors.textPrimary} !important;
+        background-color: transparent !important;
+      }
+      .ProseMirror-focused {
+        outline: none !important;
+      }
+      img[src*="palette"], svg[class*="droplet"], .highlight-background {
+        display: none !important;
+      }
+    `;
+    bridge.injectCSS(dynamicCss, 'app-theme-css');
+    console.log('[WYSIWYGEditor] injectCSS executed successfully');
+  };
+
+  // Inject dynamic CSS deterministically when ready and whenever theme changes
   useEffect(() => {
-    if (editor?.injectCSS) {
-      const dynamicCss = `
-        body, html, .ProseMirror {
-          background-color: ${theme.colors.surface} !important;
-          color: ${theme.colors.textPrimary} !important;
-          caret-color: ${theme.colors.accent} !important;
-        }
-        .ProseMirror p, .ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror li, .ProseMirror span, .ProseMirror div {
-          color: ${theme.colors.textPrimary} !important;
-        }
-      `;
-      editor.injectCSS(dynamicCss, 'app-theme-css');
-    }
-  }, [editor, theme.colors.surface, theme.colors.textPrimary, theme.colors.accent]);
+    if (!editor) return;
+
+    applyThemeCSS(editor);
+
+    const unsub = editor._subscribeToEditorStateUpdate((state) => {
+      if (state.isReady) {
+        applyThemeCSS(editor);
+      }
+    });
+
+    const t1 = setTimeout(() => applyThemeCSS(editor), 100);
+    const t2 = setTimeout(() => applyThemeCSS(editor), 500);
+
+    return () => {
+      unsub();
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, [editor, theme.colors.surface, theme.colors.textPrimary, theme.colors.accent, theme.dark]);
 
   // Expose insertTextAtCursor on bridge instance
   useEffect(() => {
