@@ -363,6 +363,36 @@ const checkAndUpdateStreak = async (userId: string, targetDateStr: string = form
   }
 };
 
+// --- Consolidated Migration Check ---
+
+export const checkAndRunMigrations = async (userId: string): Promise<void> => {
+  const t0 = Date.now();
+  try {
+    const metaRef = doc(db, 'meta', userId);
+    const metaSnap = await getDoc(metaRef);
+    const data = metaSnap.exists() ? metaSnap.data() : {};
+
+    const needsMigration = !data.migratedToDays;
+    const needsTimestampRepair = !data.hasRepairedTimestamps;
+    const needsDuplicateCleanup = !data.hasCleanedDuplicateDays;
+    const needsMonthDayBackfill = !data.hasBackfilledMonthDay;
+
+    if (!needsMigration && !needsTimestampRepair && !needsDuplicateCleanup && !needsMonthDayBackfill) {
+      console.log(`[Migrations] All 4 migration flags already set for user ${userId} (checked in ${Date.now() - t0}ms)`);
+      return;
+    }
+
+    console.log(`[Migrations] Running pending migration tasks for user ${userId}...`);
+    if (needsMigration) await migrateEntriesToDays(userId);
+    if (needsTimestampRepair) await repairTimestamps(userId);
+    if (needsDuplicateCleanup) await cleanupDuplicateDays(userId);
+    if (needsMonthDayBackfill) await backfillMonthDay(userId);
+    console.log(`[Migrations] Completed pending migrations in ${Date.now() - t0}ms`);
+  } catch (error) {
+    console.warn('[Migrations] checkAndRunMigrations error:', error);
+  }
+};
+
 // --- One-Time Migration Script (entries -> days) ---
 
 export const migrateEntriesToDays = async (userId: string): Promise<void> => {

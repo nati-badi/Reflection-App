@@ -90,7 +90,9 @@ export default function EntryScreen() {
   };
 
   const insertText = (str: string) => {
-    if (editorBridgeRef.current?.insertContent) {
+    if (editorBridgeRef.current?.insertTextAtCursor) {
+      editorBridgeRef.current.insertTextAtCursor(str);
+    } else if (editorBridgeRef.current?.insertContent) {
       editorBridgeRef.current.insertContent(str);
     } else {
       setContent(prev => prev + str);

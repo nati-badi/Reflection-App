@@ -31,9 +31,7 @@ import {
   subscribeToStreak,
   getWeeklySummariesHistory,
   getMonthlySummariesHistory,
-  migrateEntriesToDays,
-  cleanupDuplicateDays,
-  backfillMonthDay,
+  checkAndRunMigrations,
   getTodayDateString,
   getOnThisDayEntries
 } from '../services/db';
@@ -148,14 +146,16 @@ export default function TimelineFeedScreen() {
 
   const initialLoad = useCallback(async () => {
     if (!user) return;
+    const loadStart = Date.now();
     try {
       if (listDays.length === 0) {
         setLoading(true);
       }
-      await migrateEntriesToDays(user.uid);
-      await cleanupDuplicateDays(user.uid);
-      await backfillMonthDay(user.uid);
+      const migStart = Date.now();
+      await checkAndRunMigrations(user.uid);
+      const migTime = Date.now() - migStart;
 
+      const fetchStart = Date.now();
       const [streakData, initialPastDays, initialWeeklies, initialMonthlies, onThisDayData] = await Promise.all([
         getStreak(user.uid),
         getPastDays(user.uid, undefined, 20),
@@ -163,6 +163,7 @@ export default function TimelineFeedScreen() {
         getMonthlySummariesHistory(user.uid),
         getOnThisDayEntries(user.uid)
       ]);
+      const fetchTime = Date.now() - fetchStart;
 
       setStreak(streakData);
       setListDays(initialPastDays);
@@ -174,6 +175,7 @@ export default function TimelineFeedScreen() {
       if (initialPastDays.length > 0) {
         setLastDocId(initialPastDays[initialPastDays.length - 1].id);
       }
+      console.log(`[PERF PROFILING] initialLoad completed in ${Date.now() - loadStart}ms (migrationCheck: ${migTime}ms, dataFetch: ${fetchTime}ms)`);
     } catch (error) {
       console.error('Failed to load timeline data:', error);
     } finally {

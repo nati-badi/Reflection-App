@@ -428,8 +428,15 @@ export default function SettingsScreen() {
         </View>
       </View>
 
-      {/* Sign Out */}
+      {/* Account Info & Sign Out */}
       <View style={styles.section}>
+        <Text style={styles.sectionTitle}>{t('account')}</Text>
+        {(auth.currentUser?.email || user?.email) && (
+          <View style={styles.accountCard}>
+            <Text style={styles.accountLabel}>{t('signedInAs')}</Text>
+            <Text style={styles.accountEmailText}>{auth.currentUser?.email || user?.email}</Text>
+          </View>
+        )}
         <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut}>
           <LogOut size={20} color={theme.colors.error} style={{ marginRight: theme.spacing.sm }} />
           <Text style={styles.signOutText}>{t('signOut')}</Text>
@@ -706,12 +713,31 @@ const createStyles = (theme: Theme) => StyleSheet.create({
     fontFamily: theme.typography.fontFamily.bold,
     color: theme.colors.textPrimary,
   },
+  accountCard: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: 12,
+    padding: theme.spacing.md,
+    marginBottom: theme.spacing.xs,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  accountLabel: {
+    fontSize: theme.typography.sizes.small,
+    fontFamily: theme.typography.fontFamily.medium,
+    color: theme.colors.textSecondary,
+    marginBottom: 4,
+  },
+  accountEmailText: {
+    fontSize: theme.typography.sizes.regular,
+    fontFamily: theme.typography.fontFamily.bold,
+    color: theme.colors.textPrimary,
+  },
   signOutButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     padding: theme.spacing.md,
-    marginTop: theme.spacing.lg,
+    marginTop: theme.spacing.md,
   },
   signOutText: {
     color: theme.colors.error,

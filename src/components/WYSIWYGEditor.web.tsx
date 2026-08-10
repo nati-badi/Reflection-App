@@ -40,6 +40,10 @@ export function WYSIWYGEditor({ initialContent, onChangeMarkdown, theme, onBridg
       document.execCommand('insertText', false, str);
       handleInput();
     },
+    insertTextAtCursor: (str: string) => {
+      document.execCommand('insertText', false, str);
+      handleInput();
+    },
     getHTML: async () => {
       return contentRef.current?.innerHTML || '';
     },
