@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { View, StyleSheet } from 'react-native';
-import { useEditorBridge, RichText } from '@10play/tentap-editor';
+import { useEditorBridge, RichText, editorHtml } from '@10play/tentap-editor';
 import { Theme } from '../constants/theme';
 import { markdownToHtml, htmlToMarkdown } from '../utils/markdownUtils';
 
@@ -15,6 +15,8 @@ export function WYSIWYGEditor({ initialContent, onChangeMarkdown, theme, onBridg
   // Convert initial Markdown to HTML so TipTap parses strong/em/h1-3/ul/ol/blockquote HTML tags natively
   const htmlContent = useMemo(() => markdownToHtml(initialContent), [initialContent]);
 
+  const [isReady, setIsReady] = useState(false);
+
   const editorTheme = useMemo(() => ({
     webview: {
       backgroundColor: theme.colors.surface,
@@ -26,11 +28,35 @@ export function WYSIWYGEditor({ initialContent, onChangeMarkdown, theme, onBridg
     },
   }), [theme.colors.surface]);
 
+  // Construct source-level HTML with dark/light theme baked directly into <head> before initial paint
+  const customSource = useMemo(() => {
+    const headStyle = `<style id="app-initial-theme">
+      body, html, .ProseMirror, #root, div[contenteditable] {
+        background-color: ${theme.colors.surface} !important;
+        color: ${theme.colors.textPrimary} !important;
+        caret-color: ${theme.colors.accent} !important;
+      }
+      .ProseMirror p, .ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror li, .ProseMirror span, .ProseMirror div, .ProseMirror blockquote {
+        color: ${theme.colors.textPrimary} !important;
+        background-color: transparent !important;
+      }
+      .ProseMirror-focused {
+        outline: none !important;
+      }
+      img[src*="palette"], svg[class*="droplet"], .highlight-background {
+        display: none !important;
+      }
+    </style></head>`;
+
+    return editorHtml.replace('</head>', headStyle);
+  }, [theme.colors.surface, theme.colors.textPrimary, theme.colors.accent]);
+
   const editor = useEditorBridge({
     initialContent: htmlContent,
     autofocus: false,
     avoidIosKeyboard: true,
     disableColorHighlight: true,
+    customSource,
     theme: editorTheme,
     onChange: async () => {
       if (editor) {
@@ -77,17 +103,19 @@ export function WYSIWYGEditor({ initialContent, onChangeMarkdown, theme, onBridg
 
     const unsub = editor._subscribeToEditorStateUpdate((state) => {
       if (state.isReady) {
+        setIsReady(true);
         applyThemeCSS(editor);
       }
     });
 
-    const t1 = setTimeout(() => applyThemeCSS(editor), 100);
-    const t2 = setTimeout(() => applyThemeCSS(editor), 500);
+    const t1 = setTimeout(() => {
+      setIsReady(true);
+      applyThemeCSS(editor);
+    }, 150);
 
     return () => {
       unsub();
       clearTimeout(t1);
-      clearTimeout(t2);
     };
   }, [editor, theme.colors.surface, theme.colors.textPrimary, theme.colors.accent, theme.dark]);
 
@@ -138,8 +166,16 @@ export function WYSIWYGEditor({ initialContent, onChangeMarkdown, theme, onBridg
   }, [editor, onBridgeReady]);
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: theme.colors.surface }]}>
       <RichText editor={editor} style={styles.richText} />
+      {!isReady && (
+        <View 
+          style={[
+            StyleSheet.absoluteFillObject, 
+            { backgroundColor: theme.colors.surface, borderRadius: 12 }
+          ]} 
+        />
+      )}
     </View>
   );
 }
