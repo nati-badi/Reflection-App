@@ -1,13 +1,72 @@
-import { collection, doc, getDocs, query, orderBy, limit, setDoc, getDoc, where, startAfter, deleteDoc, writeBatch, onSnapshot, DocumentSnapshot } from 'firebase/firestore';
+import { collection, doc, getDocs, query, orderBy, limit, setDoc, getDoc, where, startAfter, deleteDoc, writeBatch, onSnapshot, DocumentSnapshot, getDocsFromCache, getDocFromCache } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import type { DayEntry, StreakMeta, WeeklySummary, MonthlySummary } from '../types';
 import { format, startOfWeek, endOfWeek, subWeeks, subDays, parseISO, startOfMonth, endOfMonth, subMonths, eachDayOfInterval, differenceInCalendarDays } from 'date-fns';
 import { useDataStore } from '../store/useDataStore';
 
-// --- Utility Functions ---
+// --- Utility Functions & Cache-First Helpers ---
 export const getTodayDateString = (): string => format(new Date(), 'yyyy-MM-dd');
 export const getDocIdForDate = (userId: string, dateStr: string): string => `${userId}_${dateStr}`;
 export const getTodayDocId = (userId: string): string => getDocIdForDate(userId, getTodayDateString());
+
+export const fetchDocsWithCacheFirst = async (q: any): Promise<any[]> => {
+  try {
+    const cacheSnap = await getDocsFromCache(q);
+    if (!cacheSnap.empty) {
+      return cacheSnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+    }
+  } catch (e) {
+    // Cache miss or error
+  }
+
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error('Network query timeout')), 2500)
+  );
+
+  try {
+    const querySnapshot = await Promise.race([getDocs(q), timeoutPromise]);
+    return querySnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+  } catch (netError) {
+    console.warn('[Firestore CacheFallback] Network query failed/timed out, retrying cache:', netError);
+    try {
+      const fallbackSnap = await getDocsFromCache(q);
+      return fallbackSnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+    } catch (e) {
+      return [];
+    }
+  }
+};
+
+export const fetchDocWithCacheFirst = async (docRef: any): Promise<any | null> => {
+  try {
+    const cacheSnap = await getDocFromCache(docRef);
+    if (cacheSnap.exists()) {
+      return { id: cacheSnap.id, ...cacheSnap.data() };
+    }
+  } catch (e) {
+    // Cache miss
+  }
+
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error('Network doc timeout')), 2500)
+  );
+
+  try {
+    const docSnap = await Promise.race([getDoc(docRef), timeoutPromise]);
+    if (docSnap.exists()) {
+      return { id: docSnap.id, ...docSnap.data() };
+    }
+  } catch (netError) {
+    console.warn('[Firestore CacheFallback] Network doc fetch failed/timed out, retrying cache:', netError);
+    try {
+      const fallbackSnap = await getDocFromCache(docRef);
+      if (fallbackSnap.exists()) {
+        return { id: fallbackSnap.id, ...fallbackSnap.data() };
+      }
+    } catch (e) {}
+  }
+  return null;
+};
 
 // --- Day Document Services ---
 
@@ -118,9 +177,10 @@ export const getPastDays = async (userId: string, lastDocId?: string, limitCount
 
   if (lastDocId) {
     try {
-      const lastDocRef = await getDoc(doc(db, 'days', lastDocId));
-      if (lastDocRef.exists()) {
-        q = query(q, startAfter(lastDocRef));
+      const lastDocRef = doc(db, 'days', lastDocId);
+      const docSnap = await getDocFromCache(lastDocRef).catch(() => getDoc(lastDocRef));
+      if (docSnap.exists()) {
+        q = query(q, startAfter(docSnap));
       }
     } catch (e) {
       console.warn('Pagination lastDocRef error:', e);
@@ -128,9 +188,8 @@ export const getPastDays = async (userId: string, lastDocId?: string, limitCount
   }
 
   try {
-    const querySnapshot = await getDocs(q);
-    return querySnapshot.docs
-      .map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as DayEntry))
+    const docs = await fetchDocsWithCacheFirst(q);
+    return (docs as DayEntry[])
       .filter(day => day.contentMarkdown && day.contentMarkdown.trim().length > 0);
   } catch (error) {
     console.warn('getPastDays error:', error);
@@ -218,7 +277,6 @@ export const getOnThisDayEntries = async (userId: string, targetDate: Date = new
   const targetMonthDay = format(targetDate, 'MM-dd');
   const currentYearStr = format(targetDate, 'yyyy');
 
-  // Direct indexed equality query on the derived monthDay field ("MM-DD")
   const indexedQuery = query(
     collection(db, 'days'),
     where('userId', '==', userId),
@@ -226,36 +284,14 @@ export const getOnThisDayEntries = async (userId: string, targetDate: Date = new
   );
 
   try {
-    const querySnapshot = await getDocs(indexedQuery);
-    let results = querySnapshot.docs
-      .map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as DayEntry))
+    const docs = await fetchDocsWithCacheFirst(indexedQuery);
+    let results = (docs as DayEntry[])
       .filter(day => {
         if (!day.contentMarkdown || day.contentMarkdown.trim().length === 0) return false;
-        const entryYear = day.date.substring(0, 4);
+        const entryYear = day.date ? day.date.substring(0, 4) : '';
         return entryYear !== currentYearStr;
       });
 
-    // Fallback if no indexed results found (e.g. for legacy entries created before monthDay field existed)
-    if (results.length === 0) {
-      const fallbackQuery = query(
-        collection(db, 'days'),
-        where('userId', '==', userId),
-        orderBy('date', 'desc'),
-        limit(200)
-      );
-      const fallbackSnapshot = await getDocs(fallbackQuery);
-      results = fallbackSnapshot.docs
-        .map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as DayEntry))
-        .filter(day => {
-          if (!day.contentMarkdown || day.contentMarkdown.trim().length === 0) return false;
-          if (!day.date || day.date.length < 10) return false;
-          const entryYear = day.date.substring(0, 4);
-          const entryMonthDay = day.date.substring(5, 10);
-          return entryMonthDay === targetMonthDay && entryYear !== currentYearStr;
-        });
-    }
-
-    // Sort descending by date (most recent past year first)
     return results.sort((a, b) => b.date.localeCompare(a.date));
   } catch (error) {
     console.warn('getOnThisDayEntries error:', error);
@@ -297,12 +333,12 @@ export const evaluateStreakData = (userId: string, data: StreakMeta): StreakMeta
 export const getStreak = async (userId: string): Promise<StreakMeta> => {
   try {
     const docRef = doc(db, 'meta', userId);
-    const docSnap = await getDoc(docRef);
-    if (docSnap.exists()) {
-      const rawData = docSnap.data() as StreakMeta;
-      const data = evaluateStreakData(userId, rawData);
-      useDataStore.getState().setStreak(data);
-      return data;
+    const data = await fetchDocWithCacheFirst(docRef);
+    if (data) {
+      const rawData = data as StreakMeta;
+      const evaluated = evaluateStreakData(userId, rawData);
+      useDataStore.getState().setStreak(evaluated);
+      return evaluated;
     }
   } catch (e) {
     console.warn('getStreak error:', e);
@@ -369,13 +405,35 @@ export const checkAndRunMigrations = async (userId: string): Promise<void> => {
   const t0 = Date.now();
   try {
     const metaRef = doc(db, 'meta', userId);
-    const metaSnap = await getDoc(metaRef);
-    const data = metaSnap.exists() ? metaSnap.data() : {};
+    let data: any = null;
 
-    const needsMigration = !data.migratedToDays;
-    const needsTimestampRepair = !data.hasRepairedTimestamps;
-    const needsDuplicateCleanup = !data.hasCleanedDuplicateDays;
-    const needsMonthDayBackfill = !data.hasBackfilledMonthDay;
+    try {
+      const cacheSnap = await getDocFromCache(metaRef);
+      if (cacheSnap.exists()) {
+        data = cacheSnap.data();
+      }
+    } catch (e) {}
+
+    if (!data) {
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Migration check timeout')), 1500)
+      );
+      try {
+        const metaSnap = await Promise.race([getDoc(metaRef), timeoutPromise]);
+        if (metaSnap.exists()) {
+          data = metaSnap.data();
+        }
+      } catch (e) {
+        console.warn('[Migrations] Skipping online migration check due to timeout/offline mode');
+        return;
+      }
+    }
+
+    const dataObj = data || {};
+    const needsMigration = !dataObj.migratedToDays;
+    const needsTimestampRepair = !dataObj.hasRepairedTimestamps;
+    const needsDuplicateCleanup = !dataObj.hasCleanedDuplicateDays;
+    const needsMonthDayBackfill = !dataObj.hasBackfilledMonthDay;
 
     if (!needsMigration && !needsTimestampRepair && !needsDuplicateCleanup && !needsMonthDayBackfill) {
       console.log(`[Migrations] All 4 migration flags already set for user ${userId} (checked in ${Date.now() - t0}ms)`);
@@ -673,8 +731,8 @@ export const getWeeklySummariesHistory = async (userId: string): Promise<WeeklyS
       limit(20)
     );
 
-    const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as WeeklySummary));
+    const docs = await fetchDocsWithCacheFirst(q);
+    return docs as WeeklySummary[];
   } catch (error) {
     console.warn('getWeeklySummariesHistory failed:', error);
     return [];
@@ -797,8 +855,8 @@ export const getMonthlySummariesHistory = async (userId: string): Promise<Monthl
       limit(20)
     );
 
-    const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as MonthlySummary));
+    const docs = await fetchDocsWithCacheFirst(q);
+    return docs as MonthlySummary[];
   } catch (error) {
     console.warn('getMonthlySummariesHistory failed:', error);
     return [];

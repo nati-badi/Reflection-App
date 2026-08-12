@@ -9,16 +9,19 @@ import {
   TouchableOpacity,
   View,
   FlatList,
+  RefreshControl,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useNetInfo } from '@react-native-community/netinfo';
 import {
   Flame,
   Search,
   Settings,
   Trophy,
   CalendarDays,
-  Plus
+  Plus,
+  WifiOff,
 } from 'lucide-react-native';
 import { Theme } from '../constants/theme';
 import { useAppTheme } from '../hooks/useAppTheme';
@@ -69,7 +72,11 @@ export default function TimelineFeedScreen() {
     setMonthlies,
   } = useDataStore();
 
+  const netInfo = useNetInfo();
+  const isOffline = netInfo.isConnected === false || netInfo.isInternetReachable === false;
+
   const [loading, setLoading] = useState(listDays.length === 0);
+  const [refreshing, setRefreshing] = useState(false);
   const [listLoadingMore, setListLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [lastDocId, setLastDocId] = useState<string | undefined>();
@@ -78,6 +85,18 @@ export default function TimelineFeedScreen() {
   const [selectedSummary, setSelectedSummary] = useState<WeeklySummary | MonthlySummary | null>(null);
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  const handleRefresh = async () => {
+    if (!user) return;
+    setRefreshing(true);
+    try {
+      await initialLoad();
+    } catch (e) {
+      console.warn('handleRefresh error:', e);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   useEffect(() => {
     Animated.loop(
@@ -370,10 +389,24 @@ export default function TimelineFeedScreen() {
         </View>
       </View>
 
+      {/* Offline Status Banner */}
+      {isOffline && (
+        <View style={styles.offlineBannerContainer}>
+          <WifiOff size={14} color={theme.colors.textSecondary} style={{ marginRight: 6 }} />
+          <Text style={styles.offlineBannerText}>{t('offlineBanner')}</Text>
+        </View>
+      )}
+
       {/* Main Timeline Feed */}
       {loading && timelineItems.length === 0 ? (
         <View style={styles.centerContainer}>
           <ActivityIndicator color={theme.colors.accent} />
+        </View>
+      ) : isOffline && listDays.length === 0 && (!todayDoc?.contentMarkdown || todayDoc.contentMarkdown.trim().length === 0) ? (
+        <View style={styles.centerContainer}>
+          <WifiOff size={48} color={theme.colors.textSecondary} style={{ marginBottom: 16 }} />
+          <Text style={styles.offlineEmptyTitle}>{t('offlineEmptyTitle')}</Text>
+          <Text style={styles.offlineEmptySub}>{t('offlineEmptySub')}</Text>
         </View>
       ) : (
         <FlatList
@@ -383,6 +416,14 @@ export default function TimelineFeedScreen() {
           contentContainerStyle={styles.listContent}
           onEndReached={loadMorePastDays}
           onEndReachedThreshold={0.5}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={handleRefresh}
+              tintColor={theme.colors.accent}
+              colors={[theme.colors.accent]}
+            />
+          }
           ListHeaderComponent={
             onThisDayEntries.length > 0 ? (
               <OnThisDayCard entries={onThisDayEntries} />
@@ -455,6 +496,36 @@ const createStyles = (theme: Theme) => StyleSheet.create({
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  offlineBannerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: theme.colors.surface,
+    paddingVertical: 8,
+    paddingHorizontal: theme.spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
+  offlineBannerText: {
+    fontSize: theme.typography.sizes.small,
+    fontFamily: theme.typography.fontFamily.medium,
+    color: theme.colors.textSecondary,
+  },
+  offlineEmptyTitle: {
+    fontSize: theme.typography.sizes.medium,
+    fontFamily: theme.typography.fontFamily.bold,
+    color: theme.colors.textPrimary,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  offlineEmptySub: {
+    fontSize: theme.typography.sizes.regular,
+    fontFamily: theme.typography.fontFamily.regular,
+    color: theme.colors.textSecondary,
+    textAlign: 'center',
+    paddingHorizontal: theme.spacing.xl,
+    lineHeight: 22,
   },
   iconButton: {
     minWidth: 44,
