@@ -110,6 +110,36 @@ export const getDayDocument = async (userId: string, date: string): Promise<DayE
   return null;
 };
 
+// --- Outbox Flush Service ---
+
+export const flushPendingWritesOutbox = async (userId: string): Promise<void> => {
+  const store = useDataStore.getState();
+  const pending = store.pendingWrites.filter((item) => item.userId === userId);
+
+  if (pending.length === 0) return;
+
+  console.log(`[Outbox] Flushing ${pending.length} pending write(s) for user ${userId}...`);
+
+  for (const item of pending) {
+    try {
+      if (item.type === 'day') {
+        const docId = item.id.replace('day_', '');
+        const docRef = doc(db, 'days', docId);
+        await setDoc(docRef, item.data, { merge: true });
+        store.removePendingWrite(item.id);
+        console.log(`[Outbox] Confirmed server write for day entry: ${docId}`);
+      } else if (item.type === 'streak') {
+        const docRef = doc(db, 'meta', userId);
+        await setDoc(docRef, item.data, { merge: true });
+        store.removePendingWrite(item.id);
+        console.log(`[Outbox] Confirmed server write for streak meta: ${userId}`);
+      }
+    } catch (error) {
+      console.warn(`[Outbox] Write flush failed for ${item.id} (will retry on next sync):`, error);
+    }
+  }
+};
+
 export const saveDayDocument = async (
   userId: string,
   date: string,
@@ -120,38 +150,43 @@ export const saveDayDocument = async (
   const docRef = doc(db, 'days', docId);
   const now = Date.now();
 
-  let createdAt = undefined;
-  try {
-    const existingSnap = await getDoc(docRef);
-    if (!existingSnap.exists()) {
-      createdAt = now;
-    }
-  } catch (e) {
-    // assume new if read fails
-    createdAt = now;
-  }
-
   const monthDay = date.length >= 10 ? date.substring(5, 10) : undefined;
 
   const dayData: Partial<DayEntry> = {
+    id: docId,
     userId,
     date,
     ...(monthDay ? { monthDay } : {}),
     contentMarkdown,
     mood,
+    createdAt: now,
     updatedAt: now,
   };
-  
-  // Only include createdAt if it's a completely new document
-  if (createdAt !== undefined) {
-    dayData.createdAt = createdAt;
-  }
 
+  const savedEntry = { id: docId, ...dayData } as DayEntry;
+
+  // 1. Immediately update Zustand store & persist to AsyncStorage
+  useDataStore.getState().updateCachedDay(savedEntry);
+
+  // 2. Add write item to durable pendingWrites outbox
+  const outboxId = `day_${docId}`;
+  useDataStore.getState().addPendingWrite({
+    id: outboxId,
+    type: 'day',
+    userId,
+    date,
+    data: dayData,
+    timestamp: now,
+  });
+
+  // 3. Attempt Firestore write to server
   try {
-    // merge: true ensures we don't overwrite createdAt if it exists natively
     await setDoc(docRef, dayData, { merge: true });
+    // Remove from outbox ONLY upon confirmed server write success
+    useDataStore.getState().removePendingWrite(outboxId);
+    console.log('[Firestore] Confirmed server write for day:', docId);
   } catch (error) {
-    console.warn('saveDayDocument Firestore write failed (check security rules), serving in-memory:', error);
+    console.warn('[Firestore] Server write pending/queued offline for day:', docId);
   }
 
   // Update streak ONLY IF user wrote actual non-empty content
@@ -159,8 +194,6 @@ export const saveDayDocument = async (
     await checkAndUpdateStreak(userId, date);
   }
 
-  const savedEntry = { id: docId, ...dayData } as DayEntry;
-  useDataStore.getState().updateCachedDay(savedEntry);
   return savedEntry;
 };
 
@@ -391,11 +424,26 @@ const checkAndUpdateStreak = async (userId: string, targetDateStr: string = form
     lastEntryDate: targetDateStr
   };
 
+  // 1. Immediately update Zustand & AsyncStorage
+  useDataStore.getState().setStreak(updatedStreak);
+
+  // 2. Queue in outbox
+  const outboxId = `streak_${userId}`;
+  useDataStore.getState().addPendingWrite({
+    id: outboxId,
+    type: 'streak',
+    userId,
+    data: updatedStreak,
+    timestamp: Date.now(),
+  });
+
+  // 3. Attempt server setDoc
   try {
     await setDoc(docRef, updatedStreak, { merge: true });
-    useDataStore.getState().setStreak(updatedStreak);
+    useDataStore.getState().removePendingWrite(outboxId);
+    console.log('[Firestore] Confirmed server write for streak:', userId);
   } catch (e) {
-    console.warn('Updating streak meta failed:', e);
+    console.warn('[Firestore] Server write pending/queued offline for streak:', e);
   }
 };
 

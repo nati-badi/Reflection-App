@@ -36,7 +36,8 @@ import {
   getMonthlySummariesHistory,
   checkAndRunMigrations,
   getTodayDateString,
-  getOnThisDayEntries
+  getOnThisDayEntries,
+  flushPendingWritesOutbox
 } from '../services/db';
 import { useAuthStore } from '../store/useAuthStore';
 import { useSettingsStore } from '../store/useSettingsStore';
@@ -163,10 +164,20 @@ export default function TimelineFeedScreen() {
     };
   }, [user?.uid]);
 
+  // Flush pending writes when internet connection becomes active
+  useEffect(() => {
+    if (user?.uid && netInfo.isConnected && netInfo.isInternetReachable) {
+      flushPendingWritesOutbox(user.uid);
+    }
+  }, [user?.uid, netInfo.isConnected, netInfo.isInternetReachable]);
+
   const initialLoad = useCallback(async () => {
     if (!user) return;
     const loadStart = Date.now();
     try {
+      // Flush any pending offline writes from outbox
+      flushPendingWritesOutbox(user.uid);
+
       if (listDays.length === 0) {
         setLoading(true);
       }
