@@ -37,7 +37,9 @@ import {
   checkAndRunMigrations,
   getTodayDateString,
   getOnThisDayEntries,
-  flushPendingWritesOutbox
+  flushPendingWritesOutbox,
+  migrateStateToSQLite,
+  syncRemoteToSQLite
 } from '../services/db';
 import { useAuthStore } from '../store/useAuthStore';
 import { useSettingsStore } from '../store/useSettingsStore';
@@ -507,7 +509,7 @@ const createStyles = (theme: Theme) => StyleSheet.create({
     color: theme.colors.textSecondary,
   },
   offlineEmptyTitle: {
-    fontSize: theme.typography.sizes.medium,
+    fontSize: theme.typography.sizes.regular,
     fontFamily: theme.typography.fontFamily.bold,
     color: theme.colors.textPrimary,
     marginBottom: 8,

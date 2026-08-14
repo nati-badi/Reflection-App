@@ -1,4 +1,4 @@
-import { collection, doc, getDocs, query, orderBy, limit, setDoc, getDoc, where, startAfter, deleteDoc, writeBatch, onSnapshot, DocumentSnapshot } from 'firebase/firestore';
+import { collection, doc, getDocs, query, orderBy, limit, setDoc, getDoc, where, startAfter, deleteDoc, writeBatch, onSnapshot, DocumentSnapshot, getDocFromCache } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import type { DayEntry, StreakMeta, WeeklySummary, MonthlySummary } from '../types';
 import { format, startOfWeek, endOfWeek, subWeeks, subDays, parseISO, startOfMonth, endOfMonth, subMonths, eachDayOfInterval, differenceInCalendarDays } from 'date-fns';
@@ -26,6 +26,18 @@ import {
 export const getTodayDateString = (): string => format(new Date(), 'yyyy-MM-dd');
 export const getDocIdForDate = (userId: string, dateStr: string): string => `${userId}_${dateStr}`;
 export const getTodayDocId = (userId: string): string => getDocIdForDate(userId, getTodayDateString());
+
+export const getMonthDays = async (userId: string, year: number, month: number): Promise<DayEntry[]> => {
+  const startDate = format(new Date(year, month, 1), 'yyyy-MM-dd');
+  const endDate = format(new Date(year, month + 1, 0), 'yyyy-MM-dd');
+  try {
+    const allPast = await getPastDaysLocal(userId, undefined, 500);
+    return allPast.filter(d => d.date >= startDate && d.date <= endDate);
+  } catch (error) {
+    console.warn('getMonthDays error:', error);
+    return [];
+  }
+};
 
 // --- Migration & Remote Sync Engine ---
 

@@ -73,7 +73,7 @@ export function WYSIWYGEditor({ initialContent, onChangeMarkdown, theme, onBridg
 
   const applyThemeCSS = (bridge: ReturnType<typeof useEditorBridge>) => {
     if (!bridge?.injectCSS) return;
-    console.log(`[WYSIWYGEditor] Injecting theme CSS into WebView. isDark: ${theme.dark}, surface: ${theme.colors.surface}`);
+    console.log(`[WYSIWYGEditor] Injecting theme CSS into WebView. surface: ${theme.colors.surface}`);
     const dynamicCss = `
       body, html, .ProseMirror, #root, div[contenteditable] {
         background-color: ${theme.colors.surface} !important;
@@ -117,7 +117,7 @@ export function WYSIWYGEditor({ initialContent, onChangeMarkdown, theme, onBridg
       unsub();
       clearTimeout(t1);
     };
-  }, [editor, theme.colors.surface, theme.colors.textPrimary, theme.colors.accent, theme.dark]);
+  }, [editor, theme.colors.surface, theme.colors.textPrimary, theme.colors.accent]);
 
   // Expose insertTextAtCursor on bridge instance
   useEffect(() => {
@@ -171,7 +171,7 @@ export function WYSIWYGEditor({ initialContent, onChangeMarkdown, theme, onBridg
       {!isReady && (
         <View 
           style={[
-            StyleSheet.absoluteFillObject, 
+            StyleSheet.absoluteFill, 
             { backgroundColor: theme.colors.surface, borderRadius: 12 }
           ]} 
         />
