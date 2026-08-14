@@ -36,7 +36,8 @@
       ],
       "expo-localization",
       "expo-sharing",
-      "expo-image"
+      "expo-image",
+      "expo-sqlite"
     ],
     "experiments": {
       "typedRoutes": true,

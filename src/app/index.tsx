@@ -116,44 +116,20 @@ export default function TimelineFeedScreen() {
     ).start();
   }, [pulseAnim]);
 
-  // Real-time listener for today's document & streak meta
+  // Subscribe to real-time updates for today's doc and streak
   useEffect(() => {
-    if (!user) return;
-    const today = getTodayDateString();
-    const docId = `${user.uid}_${today}`;
-    
-    const q = query(
-      collection(db, 'days'),
-      where('userId', '==', user.uid),
-      where('date', '==', today)
-    );
+    if (!user?.uid) return;
 
-    const unsubscribeToday = onSnapshot(q, (querySnapshot) => {
-      if (!querySnapshot.empty) {
-        const docSnap = querySnapshot.docs[0];
-        setTodayDoc({ id: docSnap.id, ...docSnap.data() } as DayEntry);
-      } else {
-        setTodayDoc({
-          id: docId,
-          userId: user.uid,
-          date: today,
-          contentMarkdown: '',
-          mood: null,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        });
+    const todayStr = getTodayDateString();
+    const todayDocRef = doc(db, 'days', `${user.uid}_${todayStr}`);
+
+    const unsubscribeToday = onSnapshot(todayDocRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const remoteData = { id: docSnap.id, ...docSnap.data() } as DayEntry;
+        setTodayDoc(remoteData);
       }
     }, (error) => {
-      console.warn('onSnapshot today query error:', error);
-      setTodayDoc({
-        id: docId,
-        userId: user.uid,
-        date: today,
-        contentMarkdown: '',
-        mood: null,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      });
+      console.warn('subscribeToTodayDoc error:', error);
     });
 
     const unsubscribeStreak = subscribeToStreak(user.uid);
@@ -164,10 +140,11 @@ export default function TimelineFeedScreen() {
     };
   }, [user?.uid]);
 
-  // Flush pending writes when internet connection becomes active
+  // Flush pending writes and trigger downstream sync when internet connection becomes active
   useEffect(() => {
     if (user?.uid && netInfo.isConnected && netInfo.isInternetReachable) {
       flushPendingWritesOutbox(user.uid);
+      syncRemoteToSQLite(user.uid).catch(() => {});
     }
   }, [user?.uid, netInfo.isConnected, netInfo.isInternetReachable]);
 
@@ -175,8 +152,14 @@ export default function TimelineFeedScreen() {
     if (!user) return;
     const loadStart = Date.now();
     try {
-      // Flush any pending offline writes from outbox
+      // 1. One-time SQLite migration
+      await migrateStateToSQLite(user.uid);
+
+      // 2. Flush pending offline writes from outbox
       flushPendingWritesOutbox(user.uid);
+
+      // 3. Trigger downstream background sync from Firestore
+      syncRemoteToSQLite(user.uid).catch(() => {});
 
       if (listDays.length === 0) {
         setLoading(true);

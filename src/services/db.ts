@@ -1,71 +1,147 @@
-import { collection, doc, getDocs, query, orderBy, limit, setDoc, getDoc, where, startAfter, deleteDoc, writeBatch, onSnapshot, DocumentSnapshot, getDocsFromCache, getDocFromCache } from 'firebase/firestore';
+import { collection, doc, getDocs, query, orderBy, limit, setDoc, getDoc, where, startAfter, deleteDoc, writeBatch, onSnapshot, DocumentSnapshot } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import type { DayEntry, StreakMeta, WeeklySummary, MonthlySummary } from '../types';
 import { format, startOfWeek, endOfWeek, subWeeks, subDays, parseISO, startOfMonth, endOfMonth, subMonths, eachDayOfInterval, differenceInCalendarDays } from 'date-fns';
 import { useDataStore } from '../store/useDataStore';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  getPastDaysLocal,
+  getDayByDateLocal,
+  saveDayLocal,
+  upsertRemoteDayLocal,
+  getStreakLocal,
+  saveStreakLocal,
+  upsertRemoteStreakLocal,
+  getPendingWritesLocal,
+  markWriteSyncedLocal,
+  getWeeklySummariesLocal,
+  saveWeeklySummaryLocal,
+  getMonthlySummariesLocal,
+  saveMonthlySummaryLocal,
+  getOnThisDayEntriesLocal,
+  searchDaysLocal,
+} from './localDatabase';
 
-// --- Utility Functions & Cache-First Helpers ---
+// --- Utility Functions ---
 export const getTodayDateString = (): string => format(new Date(), 'yyyy-MM-dd');
 export const getDocIdForDate = (userId: string, dateStr: string): string => `${userId}_${dateStr}`;
 export const getTodayDocId = (userId: string): string => getDocIdForDate(userId, getTodayDateString());
 
-export const fetchDocsWithCacheFirst = async (q: any): Promise<any[]> => {
+// --- Migration & Remote Sync Engine ---
+
+export const migrateStateToSQLite = async (userId: string): Promise<void> => {
   try {
-    const cacheSnap = await getDocsFromCache(q);
-    if (!cacheSnap.empty) {
-      return cacheSnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+    const MIGRATION_FLAG_KEY = `hasMigratedToSQLite_${userId}`;
+    const alreadyMigrated = await AsyncStorage.getItem(MIGRATION_FLAG_KEY);
+    if (alreadyMigrated === 'true') {
+      return;
     }
+
+    console.log(`[SQLite Migration] Starting one-time migration for user ${userId}...`);
+
+    const rawStoreData = await AsyncStorage.getItem('reflection-app-data-storage');
+    if (rawStoreData) {
+      try {
+        const parsed = JSON.parse(rawStoreData);
+        const state = parsed.state || {};
+
+        if (Array.isArray(state.timelineDays)) {
+          for (const day of state.timelineDays) {
+            await saveDayLocal(day, false);
+          }
+        }
+        if (state.todayDoc) {
+          await saveDayLocal(state.todayDoc, false);
+        }
+        if (state.streak) {
+          await saveStreakLocal(state.streak, userId, false);
+        }
+        if (Array.isArray(state.weeklies)) {
+          for (const w of state.weeklies) {
+            await saveWeeklySummaryLocal(w);
+          }
+        }
+        if (Array.isArray(state.monthlies)) {
+          for (const m of state.monthlies) {
+            await saveMonthlySummaryLocal(m);
+          }
+        }
+        if (Array.isArray(state.pendingWrites)) {
+          for (const p of state.pendingWrites) {
+            const payload = p.payload || p.data;
+            if (p.type === 'day' && payload) {
+              await saveDayLocal(payload, true);
+            } else if (p.type === 'streak' && payload) {
+              await saveStreakLocal(payload, userId, true);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[SQLite Migration] Parsing AsyncStorage cache failed:', e);
+      }
+    }
+
+    await AsyncStorage.setItem(MIGRATION_FLAG_KEY, 'true');
+    console.log(`[SQLite Migration] Migration completed successfully for user ${userId}`);
   } catch (e) {
-    // Cache miss or error
-  }
-
-  const timeoutPromise = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error('Network query timeout')), 2500)
-  );
-
-  try {
-    const querySnapshot = await Promise.race([getDocs(q), timeoutPromise]);
-    return querySnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
-  } catch (netError) {
-    console.warn('[Firestore CacheFallback] Network query failed/timed out, retrying cache:', netError);
-    try {
-      const fallbackSnap = await getDocsFromCache(q);
-      return fallbackSnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
-    } catch (e) {
-      return [];
-    }
+    console.warn('[SQLite Migration] migrateStateToSQLite error:', e);
   }
 };
 
-export const fetchDocWithCacheFirst = async (docRef: any): Promise<any | null> => {
+export const syncRemoteToSQLite = async (userId: string): Promise<void> => {
   try {
-    const cacheSnap = await getDocFromCache(docRef);
-    if (cacheSnap.exists()) {
-      return { id: cacheSnap.id, ...cacheSnap.data() };
+    const q = query(
+      collection(db, 'days'),
+      where('userId', '==', userId),
+      orderBy('date', 'desc'),
+      limit(50)
+    );
+    const docs = await getDocs(q);
+    for (const docSnap of docs.docs) {
+      const remoteDay = { id: docSnap.id, ...docSnap.data() } as DayEntry;
+      await upsertRemoteDayLocal(remoteDay);
+    }
+
+    const metaRef = doc(db, 'meta', userId);
+    const metaSnap = await getDoc(metaRef);
+    if (metaSnap.exists()) {
+      await upsertRemoteStreakLocal(metaSnap.data() as StreakMeta, userId);
     }
   } catch (e) {
-    // Cache miss
+    console.warn('[Downstream Sync] syncRemoteToSQLite failed (offline or network error):', e);
   }
+};
 
-  const timeoutPromise = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error('Network doc timeout')), 2500)
-  );
+// --- Outbox Flush Service ---
 
+export const flushPendingWritesOutbox = async (userId: string): Promise<void> => {
   try {
-    const docSnap = await Promise.race([getDoc(docRef), timeoutPromise]);
-    if (docSnap.exists()) {
-      return { id: docSnap.id, ...docSnap.data() };
-    }
-  } catch (netError) {
-    console.warn('[Firestore CacheFallback] Network doc fetch failed/timed out, retrying cache:', netError);
-    try {
-      const fallbackSnap = await getDocFromCache(docRef);
-      if (fallbackSnap.exists()) {
-        return { id: fallbackSnap.id, ...fallbackSnap.data() };
+    const pending = await getPendingWritesLocal(userId);
+    if (pending.length === 0) return;
+
+    console.log(`[Outbox] Flushing ${pending.length} pending write(s) from SQLite for user ${userId}...`);
+
+    for (const item of pending) {
+      try {
+        if (item.type === 'day') {
+          const docId = item.id.replace('day_', '');
+          const docRef = doc(db, 'days', docId);
+          await setDoc(docRef, item.payload, { merge: true });
+          await markWriteSyncedLocal(item.id, 'day', docId);
+          console.log(`[Outbox] Confirmed server write for day entry: ${docId}`);
+        } else if (item.type === 'streak') {
+          const docRef = doc(db, 'meta', userId);
+          await setDoc(docRef, item.payload, { merge: true });
+          await markWriteSyncedLocal(item.id, 'streak', userId);
+          console.log(`[Outbox] Confirmed server write for streak meta: ${userId}`);
+        }
+      } catch (error) {
+        console.warn(`[Outbox] Server write failed for ${item.id} (will retry on next sync):`, error);
       }
-    } catch (e) {}
+    }
+  } catch (e) {
+    console.warn('[Outbox] flushPendingWritesOutbox error:', e);
   }
-  return null;
 };
 
 // --- Day Document Services ---
@@ -73,18 +149,14 @@ export const fetchDocWithCacheFirst = async (docRef: any): Promise<any | null> =
 export const getOrCreateTodayDocument = async (userId: string): Promise<DayEntry> => {
   const today = getTodayDateString();
   const docId = getTodayDocId(userId);
-  const docRef = doc(db, 'days', docId);
 
   try {
-    const docSnap = await getDoc(docRef);
-    if (docSnap.exists()) {
-      return { id: docSnap.id, ...docSnap.data() } as DayEntry;
-    }
-  } catch (error) {
-    console.warn('getOrCreateTodayDocument error:', error);
+    const local = await getDayByDateLocal(userId, today);
+    if (local) return local;
+  } catch (e) {
+    console.warn('getOrCreateTodayDocument local read error:', e);
   }
 
-  // Return empty day object in memory without writing to Firestore until user types/saves content
   return {
     id: docId,
     userId,
@@ -97,46 +169,11 @@ export const getOrCreateTodayDocument = async (userId: string): Promise<DayEntry
 };
 
 export const getDayDocument = async (userId: string, date: string): Promise<DayEntry | null> => {
-  const docId = getDocIdForDate(userId, date);
-  const docRef = doc(db, 'days', docId);
   try {
-    const docSnap = await getDoc(docRef);
-    if (docSnap.exists()) {
-      return { id: docSnap.id, ...docSnap.data() } as DayEntry;
-    }
+    return await getDayByDateLocal(userId, date);
   } catch (error) {
     console.warn('getDayDocument error:', error);
-  }
-  return null;
-};
-
-// --- Outbox Flush Service ---
-
-export const flushPendingWritesOutbox = async (userId: string): Promise<void> => {
-  const store = useDataStore.getState();
-  const pending = store.pendingWrites.filter((item) => item.userId === userId);
-
-  if (pending.length === 0) return;
-
-  console.log(`[Outbox] Flushing ${pending.length} pending write(s) for user ${userId}...`);
-
-  for (const item of pending) {
-    try {
-      if (item.type === 'day') {
-        const docId = item.id.replace('day_', '');
-        const docRef = doc(db, 'days', docId);
-        await setDoc(docRef, item.data, { merge: true });
-        store.removePendingWrite(item.id);
-        console.log(`[Outbox] Confirmed server write for day entry: ${docId}`);
-      } else if (item.type === 'streak') {
-        const docRef = doc(db, 'meta', userId);
-        await setDoc(docRef, item.data, { merge: true });
-        store.removePendingWrite(item.id);
-        console.log(`[Outbox] Confirmed server write for streak meta: ${userId}`);
-      }
-    } catch (error) {
-      console.warn(`[Outbox] Write flush failed for ${item.id} (will retry on next sync):`, error);
-    }
+    return null;
   }
 };
 
@@ -147,12 +184,10 @@ export const saveDayDocument = async (
   mood: string | null
 ): Promise<DayEntry> => {
   const docId = getDocIdForDate(userId, date);
-  const docRef = doc(db, 'days', docId);
   const now = Date.now();
-
   const monthDay = date.length >= 10 ? date.substring(5, 10) : undefined;
 
-  const dayData: Partial<DayEntry> = {
+  const dayData: DayEntry = {
     id: docId,
     userId,
     date,
@@ -163,92 +198,32 @@ export const saveDayDocument = async (
     updatedAt: now,
   };
 
-  const savedEntry = { id: docId, ...dayData } as DayEntry;
+  // 1. Write to local SQLite database immediately (mark syncStatus = 'pending' & insert outbox row)
+  await saveDayLocal(dayData, true);
 
-  // 1. Immediately update Zustand store & persist to AsyncStorage
-  useDataStore.getState().updateCachedDay(savedEntry);
+  // 2. Immediately update in-memory UI store
+  useDataStore.getState().updateCachedDay(dayData);
 
-  // 2. Add write item to durable pendingWrites outbox
-  const outboxId = `day_${docId}`;
-  useDataStore.getState().addPendingWrite({
-    id: outboxId,
-    type: 'day',
-    userId,
-    date,
-    data: dayData,
-    timestamp: now,
-  });
+  // 3. Trigger background sync to Firestore
+  flushPendingWritesOutbox(userId).catch(() => {});
 
-  // 3. Attempt Firestore write to server
-  try {
-    await setDoc(docRef, dayData, { merge: true });
-    // Remove from outbox ONLY upon confirmed server write success
-    useDataStore.getState().removePendingWrite(outboxId);
-    console.log('[Firestore] Confirmed server write for day:', docId);
-  } catch (error) {
-    console.warn('[Firestore] Server write pending/queued offline for day:', docId);
-  }
-
-  // Update streak ONLY IF user wrote actual non-empty content
   if (contentMarkdown.trim().length > 0) {
     await checkAndUpdateStreak(userId, date);
   }
 
-  return savedEntry;
+  return dayData;
 };
 
 export const getPastDays = async (userId: string, lastDocId?: string, limitCount = 20): Promise<DayEntry[]> => {
-  const today = format(new Date(), 'yyyy-MM-dd');
-
-  let q = query(
-    collection(db, 'days'),
-    where('userId', '==', userId),
-    where('date', '<', today),
-    orderBy('date', 'desc'),
-    limit(limitCount)
-  );
-
-  if (lastDocId) {
-    try {
-      const lastDocRef = doc(db, 'days', lastDocId);
-      const docSnap = await getDocFromCache(lastDocRef).catch(() => getDoc(lastDocRef));
-      if (docSnap.exists()) {
-        q = query(q, startAfter(docSnap));
-      }
-    } catch (e) {
-      console.warn('Pagination lastDocRef error:', e);
-    }
-  }
-
   try {
-    const docs = await fetchDocsWithCacheFirst(q);
-    return (docs as DayEntry[])
-      .filter(day => day.contentMarkdown && day.contentMarkdown.trim().length > 0);
+    let lastDate: string | undefined = undefined;
+    if (lastDocId) {
+      const lastDay = await getDayByDateLocal(userId, lastDocId.replace(`${userId}_`, ''));
+      if (lastDay) lastDate = lastDay.date;
+    }
+    return await getPastDaysLocal(userId, lastDate, limitCount);
   } catch (error) {
     console.warn('getPastDays error:', error);
-    return [];
-  }
-};
-
-export const getMonthDays = async (userId: string, year: number, month: number): Promise<DayEntry[]> => {
-  const startDate = format(new Date(year, month, 1), 'yyyy-MM-dd');
-  const endDate = format(new Date(year, month + 1, 0), 'yyyy-MM-dd');
-
-  const q = query(
-    collection(db, 'days'),
-    where('userId', '==', userId),
-    where('date', '>=', startDate),
-    where('date', '<=', endDate),
-    orderBy('date', 'desc')
-  );
-
-  try {
-    const querySnapshot = await getDocs(q);
-    return querySnapshot.docs
-      .map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as DayEntry))
-      .filter(day => day.contentMarkdown && day.contentMarkdown.trim().length > 0);
-  } catch (error) {
-    console.warn('getMonthDays error:', error);
     return [];
   }
 };
@@ -260,45 +235,11 @@ export const searchDays = async (
   endDate?: string, 
   mood?: string
 ): Promise<DayEntry[]> => {
-  const trimmedQuery = searchQuery.trim();
-  // If searching by keyword, date range, or mood, allow empty search query
-  if (!trimmedQuery && !startDate && !endDate && !mood) return [];
-
-  // Use simple userId + date ordering query (no composite index required)
-  const q = query(
-    collection(db, 'days'),
-    where('userId', '==', userId),
-    orderBy('date', 'desc'),
-    limit(200)
-  );
-
   try {
-    const querySnapshot = await getDocs(q);
-    let results = querySnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as DayEntry));
-
-    // Filter by date range
-    if (startDate) {
-      results = results.filter(day => day.date >= startDate);
-    }
-    if (endDate) {
-      results = results.filter(day => day.date <= endDate);
-    }
-
-    // Filter by selected mood button
-    if (mood) {
-      results = results.filter(day => day.mood === mood);
-    }
-
-    // Filter by text search query (matches content markdown or mood emoji)
-    if (trimmedQuery) {
-      const term = trimmedQuery.toLowerCase();
-      results = results.filter(day => {
-        const matchesContent = day.contentMarkdown && day.contentMarkdown.toLowerCase().includes(term);
-        const matchesMood = day.mood && day.mood.includes(trimmedQuery);
-        return matchesContent || matchesMood;
-      });
-    }
-
+    let results = await searchDaysLocal(userId, searchQuery);
+    if (startDate) results = results.filter(day => day.date >= startDate);
+    if (endDate) results = results.filter(day => day.date <= endDate);
+    if (mood) results = results.filter(day => day.mood === mood);
     return results;
   } catch (error) {
     console.warn('searchDays error:', error);
@@ -307,25 +248,9 @@ export const searchDays = async (
 };
 
 export const getOnThisDayEntries = async (userId: string, targetDate: Date = new Date()): Promise<DayEntry[]> => {
-  const targetMonthDay = format(targetDate, 'MM-dd');
-  const currentYearStr = format(targetDate, 'yyyy');
-
-  const indexedQuery = query(
-    collection(db, 'days'),
-    where('userId', '==', userId),
-    where('monthDay', '==', targetMonthDay)
-  );
-
   try {
-    const docs = await fetchDocsWithCacheFirst(indexedQuery);
-    let results = (docs as DayEntry[])
-      .filter(day => {
-        if (!day.contentMarkdown || day.contentMarkdown.trim().length === 0) return false;
-        const entryYear = day.date ? day.date.substring(0, 4) : '';
-        return entryYear !== currentYearStr;
-      });
-
-    return results.sort((a, b) => b.date.localeCompare(a.date));
+    const targetMonthDay = format(targetDate, 'MM-dd');
+    return await getOnThisDayEntriesLocal(userId, targetMonthDay);
   } catch (error) {
     console.warn('getOnThisDayEntries error:', error);
     return [];
@@ -340,23 +265,17 @@ export const evaluateStreakData = (userId: string, data: StreakMeta): StreakMeta
   const todayStr = getTodayDateString();
   const yesterdayStr = format(subDays(parseISO(todayStr), 1), 'yyyy-MM-dd');
 
-  // If last entry was today or yesterday, streak is still active
   if (data.lastEntryDate === todayStr || data.lastEntryDate === yesterdayStr) {
     return data;
   }
 
-  // If last entry was prior to yesterday, streak is broken -> reset currentStreak to 0
   const daysDiff = differenceInCalendarDays(parseISO(todayStr), parseISO(data.lastEntryDate));
   if (daysDiff > 1 && data.currentStreak > 0) {
     const updated: StreakMeta = {
       ...data,
       currentStreak: 0,
     };
-    // Persist reset to Firestore asynchronously
-    const docRef = doc(db, 'meta', userId);
-    setDoc(docRef, { currentStreak: 0 }, { merge: true }).catch((e) => {
-      console.warn('Persisting evaluated streak reset failed:', e);
-    });
+    saveStreakLocal(updated, userId, true).catch(() => {});
     return updated;
   }
 
@@ -365,11 +284,9 @@ export const evaluateStreakData = (userId: string, data: StreakMeta): StreakMeta
 
 export const getStreak = async (userId: string): Promise<StreakMeta> => {
   try {
-    const docRef = doc(db, 'meta', userId);
-    const data = await fetchDocWithCacheFirst(docRef);
-    if (data) {
-      const rawData = data as StreakMeta;
-      const evaluated = evaluateStreakData(userId, rawData);
+    const local = await getStreakLocal(userId);
+    if (local) {
+      const evaluated = evaluateStreakData(userId, local);
       useDataStore.getState().setStreak(evaluated);
       return evaluated;
     }
@@ -388,8 +305,11 @@ export const subscribeToStreak = (userId: string) => {
     (docSnap: DocumentSnapshot) => {
       if (docSnap.exists()) {
         const rawData = docSnap.data() as StreakMeta;
-        const data = evaluateStreakData(userId, rawData);
-        useDataStore.getState().setStreak(data);
+        // Guarded conflict-safe upsert into SQLite: skips if local syncStatus === 'pending'
+        upsertRemoteStreakLocal(rawData, userId).then(() => {
+          const evaluated = evaluateStreakData(userId, rawData);
+          useDataStore.getState().setStreak(evaluated);
+        });
       } else {
         const defaultStreak = { currentStreak: 0, longestStreak: 0, lastEntryDate: '' };
         useDataStore.getState().setStreak(defaultStreak);
@@ -405,10 +325,9 @@ const checkAndUpdateStreak = async (userId: string, targetDateStr: string = form
   const streakData = await getStreak(userId);
 
   if (streakData.lastEntryDate === targetDateStr) {
-    return; // Already recorded for this date
+    return;
   }
 
-  const docRef = doc(db, 'meta', userId);
   const targetDate = parseISO(targetDateStr);
   const yesterdayStr = format(subDays(targetDate, 1), 'yyyy-MM-dd');
 
@@ -424,27 +343,14 @@ const checkAndUpdateStreak = async (userId: string, targetDateStr: string = form
     lastEntryDate: targetDateStr
   };
 
-  // 1. Immediately update Zustand & AsyncStorage
+  // 1. Immediately write to local SQLite database (mark syncStatus = 'pending' & insert outbox row)
+  await saveStreakLocal(updatedStreak, userId, true);
+
+  // 2. Immediately update reactive UI store
   useDataStore.getState().setStreak(updatedStreak);
 
-  // 2. Queue in outbox
-  const outboxId = `streak_${userId}`;
-  useDataStore.getState().addPendingWrite({
-    id: outboxId,
-    type: 'streak',
-    userId,
-    data: updatedStreak,
-    timestamp: Date.now(),
-  });
-
-  // 3. Attempt server setDoc
-  try {
-    await setDoc(docRef, updatedStreak, { merge: true });
-    useDataStore.getState().removePendingWrite(outboxId);
-    console.log('[Firestore] Confirmed server write for streak:', userId);
-  } catch (e) {
-    console.warn('[Firestore] Server write pending/queued offline for streak:', e);
-  }
+  // 3. Trigger background sync
+  flushPendingWritesOutbox(userId).catch(() => {});
 };
 
 // --- Consolidated Migration Check ---
@@ -760,11 +666,13 @@ export const generateAndSaveWeeklySummary = async (
     createdAt: Date.now(),
   };
 
+  await saveWeeklySummaryLocal(summaryData);
+
   try {
     const docRef = doc(db, 'weeklySummaries', docId);
-    await setDoc(docRef, summaryData);
+    setDoc(docRef, summaryData).catch(() => {});
   } catch (error) {
-    console.warn('Saving weeklySummary to Firestore failed, serving in-memory:', error);
+    console.warn('Saving weeklySummary to Firestore failed, serving local:', error);
   }
 
   return { id: docId, ...summaryData };
@@ -772,15 +680,7 @@ export const generateAndSaveWeeklySummary = async (
 
 export const getWeeklySummariesHistory = async (userId: string): Promise<WeeklySummary[]> => {
   try {
-    const q = query(
-      collection(db, 'weeklySummaries'),
-      where('userId', '==', userId),
-      orderBy('createdAt', 'desc'),
-      limit(20)
-    );
-
-    const docs = await fetchDocsWithCacheFirst(q);
-    return docs as WeeklySummary[];
+    return await getWeeklySummariesLocal(userId);
   } catch (error) {
     console.warn('getWeeklySummariesHistory failed:', error);
     return [];
@@ -791,11 +691,9 @@ export const getWeeklySummariesHistory = async (userId: string): Promise<WeeklyS
 
 export const getMonthlySummary = async (userId: string, month: string): Promise<MonthlySummary | null> => {
   try {
-    const docRef = doc(db, 'monthlySummaries', `${userId}_${month}`);
-    const docSnap = await getDoc(docRef);
-    if (docSnap.exists()) {
-      return { id: docSnap.id, ...docSnap.data() } as MonthlySummary;
-    }
+    const list = await getMonthlySummariesLocal(userId);
+    const found = list.find(m => m.month === month);
+    if (found) return found;
   } catch (error) {
     console.warn('getMonthlySummary failed:', error);
   }
@@ -820,21 +718,11 @@ export const generateAndSaveMonthlySummary = async (
     return existing;
   }
 
-  // 2. Query days in this month
-  const q = query(
-    collection(db, 'days'),
-    where('userId', '==', userId),
-    where('date', '>=', startDateStr),
-    where('date', '<=', endDateStr),
-    orderBy('date', 'desc')
-  );
-
+  // 2. Query days in this month from local SQLite
   let monthDays: DayEntry[] = [];
   try {
-    const querySnapshot = await getDocs(q);
-    monthDays = querySnapshot.docs
-      .map(docSnap => docSnap.data() as DayEntry)
-      .filter(d => d.contentMarkdown && d.contentMarkdown.trim().length > 0);
+    const allPast = await getPastDaysLocal(userId, undefined, 500);
+    monthDays = allPast.filter(d => d.date >= startDateStr && d.date <= endDateStr);
   } catch (e) {
     console.warn('Failed to query month days:', e);
     return null;
@@ -884,11 +772,13 @@ export const generateAndSaveMonthlySummary = async (
     createdAt: Date.now(),
   };
 
+  await saveMonthlySummaryLocal(summaryData);
+
   try {
     const docRef = doc(db, 'monthlySummaries', docId);
-    await setDoc(docRef, summaryData);
+    setDoc(docRef, summaryData).catch(() => {});
   } catch (error) {
-    console.warn('Saving monthlySummary to Firestore failed, serving in-memory:', error);
+    console.warn('Saving monthlySummary to Firestore failed, serving local:', error);
   }
 
   return { id: docId, ...summaryData };
@@ -896,15 +786,7 @@ export const generateAndSaveMonthlySummary = async (
 
 export const getMonthlySummariesHistory = async (userId: string): Promise<MonthlySummary[]> => {
   try {
-    const q = query(
-      collection(db, 'monthlySummaries'),
-      where('userId', '==', userId),
-      orderBy('createdAt', 'desc'),
-      limit(20)
-    );
-
-    const docs = await fetchDocsWithCacheFirst(q);
-    return docs as MonthlySummary[];
+    return await getMonthlySummariesLocal(userId);
   } catch (error) {
     console.warn('getMonthlySummariesHistory failed:', error);
     return [];
